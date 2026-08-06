@@ -21,7 +21,6 @@ jobs:
     timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      DERIVED_DATA_PATH: ${{ runner.temp }}/PocketFinancerDerivedData
       XCODEBUILD_JOBS: 2
       TEST_DESTINATION: platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5
 
@@ -67,10 +66,12 @@ jobs:
       - name: Build release configuration
         env:
           CONFIGURATION: Release
+          DERIVED_DATA_PATH: ${{ runner.temp }}/PocketFinancerDerivedData
         run: scripts/build.sh
 
       - name: Run unit and UI smoke tests
         env:
+          DERIVED_DATA_PATH: ${{ runner.temp }}/PocketFinancerDerivedData
           ENABLE_CODE_COVERAGE: YES
           RESULT_BUNDLE_PATH: ${{ runner.temp }}/PocketFinancer.xcresult
         run: scripts/test.sh
