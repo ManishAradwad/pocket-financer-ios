@@ -4,6 +4,11 @@ import XCTest
 @testable import PocketFinancer
 
 final class AppDatabaseStartupTests: XCTestCase {
+    /// Production keeps its database alive for the process lifetime. Keep a successfully
+    /// opened compatibility fixture alive too, because iOS 26 SwiftData can abort if a
+    /// freshly opened `ModelContainer` is released while its startup notifications drain.
+    @MainActor private static var retainedCompatibleStores: [(AppDatabase, URL)] = []
+
     func testObservedUnknownModelErrorUsesSafeDiagnosticWithoutUnderlyingDetails() {
         let sensitiveDescription = "Store at /private/example contained a sensitive alert body"
         let modelError = NSError(
@@ -73,13 +78,18 @@ final class AppDatabaseStartupTests: XCTestCase {
     }
 
     @MainActor
-    func testPreBaselineUnversionedStoreFailsClosedAndRemainsReadable() throws {
+    func testPreBaselineUnversionedStorePreservesEvidenceWhetherOpenedOrRejected() throws {
         let directoryURL = FileManager.default.temporaryDirectory.appending(
             path: "PocketFinancerPreBaseline-\(UUID().uuidString)",
             directoryHint: .isDirectory
         )
         let storeURL = directoryURL.appending(path: "PocketFinancer.store")
-        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        var retainedForProcessLifetime = false
+        defer {
+            if !retainedForProcessLifetime {
+                try? FileManager.default.removeItem(at: directoryURL)
+            }
+        }
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
         let legacySchema = Schema([InboxAlert.self, Transaction.self, Account.self])
@@ -111,28 +121,37 @@ final class AppDatabaseStartupTests: XCTestCase {
         }
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: storeURL.path))
-        XCTAssertThrowsError(try AppDatabase(storeURL: storeURL)) { error in
+        do {
+            let database = try AppDatabase(storeURL: storeURL)
+            Self.retainedCompatibleStores.append((database, directoryURL))
+            retainedForProcessLifetime = true
+            let alerts = try database.container.mainContext.fetch(FetchDescriptor<InboxAlert>())
+            XCTAssertEqual(alerts.count, 1)
+            XCTAssertEqual(alerts.first?.id, expectedID)
+            XCTAssertEqual(alerts.first?.rawBody, TestFixtures.validBody)
+        } catch {
             guard let failure = error as? AppDatabaseStartupFailure else {
                 return XCTFail("Expected a sanitized AppDatabaseStartupFailure")
             }
             XCTAssertEqual(failure.kind, .unrecognizedStoreModel)
+
+            try autoreleasepool {
+                let configuration = ModelConfiguration(
+                    "PocketFinancerPreBaselineReader",
+                    schema: legacySchema,
+                    url: storeURL,
+                    allowsSave: true,
+                    cloudKitDatabase: .none
+                )
+                let container = try ModelContainer(for: legacySchema, configurations: configuration)
+                let alerts = try container.mainContext.fetch(FetchDescriptor<InboxAlert>())
+
+                XCTAssertEqual(alerts.count, 1)
+                XCTAssertEqual(alerts.first?.id, expectedID)
+                XCTAssertEqual(alerts.first?.rawBody, TestFixtures.validBody)
+            }
         }
+
         XCTAssertTrue(FileManager.default.fileExists(atPath: storeURL.path))
-
-        try autoreleasepool {
-            let configuration = ModelConfiguration(
-                "PocketFinancerPreBaselineReader",
-                schema: legacySchema,
-                url: storeURL,
-                allowsSave: true,
-                cloudKitDatabase: .none
-            )
-            let container = try ModelContainer(for: legacySchema, configurations: configuration)
-            let alerts = try container.mainContext.fetch(FetchDescriptor<InboxAlert>())
-
-            XCTAssertEqual(alerts.count, 1)
-            XCTAssertEqual(alerts.first?.id, expectedID)
-            XCTAssertEqual(alerts.first?.rawBody, TestFixtures.validBody)
-        }
     }
 }
