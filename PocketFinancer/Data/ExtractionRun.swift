@@ -165,10 +165,12 @@ final class ExtractionRun {
         validationMerchantStateRawValue = report.state(for: .merchant).rawValue
         validationAccountStateRawValue = report.state(for: .account).rawValue
         validationDateStateRawValue = report.state(for: .date).rawValue
-        validationOutcomeRawValue =
-            report.validatedDraft == nil
-            ? ExtractionValidationOutcome.failed.rawValue
-            : ExtractionValidationOutcome.passed.rawValue
+        switch report.validatedDraft {
+        case .none:
+            validationOutcomeRawValue = ExtractionValidationOutcome.failed.rawValue
+        case .some:
+            validationOutcomeRawValue = ExtractionValidationOutcome.passed.rawValue
+        }
     }
 
     func recordValidationNotPerformed() {
