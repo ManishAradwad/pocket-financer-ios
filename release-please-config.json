@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "draft": true,
+  "draft-pull-request": true,
+  "force-tag-creation": true,
+  "packages": {
+    ".": {
+      "package-name": "pocket-financer-ios",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "Config/Version.xcconfig"
+        }
+      ]
+    }
+  }
+}

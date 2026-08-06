@@ -1,0 +1,6 @@
+PRODUCT_BUNDLE_IDENTIFIER = com.manisharadwad.pocketfinancer.uitests
+PRODUCT_NAME = PocketFinancerUITests
+
+CODE_SIGN_STYLE = Automatic
+GENERATE_INFOPLIST_FILE = YES
+TEST_TARGET_NAME = PocketFinancer

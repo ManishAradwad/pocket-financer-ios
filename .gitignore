@@ -1,0 +1,23 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Code coverage and test output
+*.xcresult
+coverage/
+
+# Local configuration
+*.local.xcconfig
+.env
+
+# macOS
+.DS_Store

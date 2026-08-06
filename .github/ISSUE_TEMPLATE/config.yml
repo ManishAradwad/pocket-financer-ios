@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security or privacy vulnerability
+    url: https://github.com/ManishAradwad
+    about: Contact the repository owner through an agreed private channel. Do not open an issue or include real financial data.

@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Format, build, and test
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      DERIVED_DATA_PATH: ${{ runner.temp }}/PocketFinancerDerivedData
+      XCODEBUILD_JOBS: 2
+      TEST_DESTINATION: platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Record toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun simctl list runtimes
+
+      - name: Validate project metadata
+        run: |
+          plutil -lint PocketFinancer.xcodeproj/project.pbxproj
+          plutil -lint PocketFinancer/Resources/PrivacyInfo.xcprivacy
+          xmllint --noout PocketFinancer.xcodeproj/xcshareddata/xcschemes/PocketFinancer.xcscheme
+          jq empty .github/rulesets/main.json
+          jq empty release-please-config.json
+          jq empty .release-please-manifest.json
+
+      - name: Enforce local-only runtime
+        run: |
+          if rg -q 'XCRemoteSwiftPackageReference|XCSwiftPackageProductDependency' PocketFinancer.xcodeproj/project.pbxproj; then
+            echo "Unexpected remote Swift package dependency." >&2
+            exit 1
+          fi
+          if rg -q '(^|[[:space:]])import[[:space:]]+(CloudKit|Network)([[:space:]]|$)|URLSession' PocketFinancer; then
+            echo "Unexpected cloud or network API in the app target." >&2
+            exit 1
+          fi
+          if git ls-files | rg -qi '(^|/)(sms\.db|extraction_ds\.jsonl|.*\.mobileprovision|.*\.p12|.*\.cer)$'; then
+            echo "Unexpected raw-message corpus or signing material in the repository." >&2
+            exit 1
+          fi
+
+      - name: Check formatting
+        run: scripts/format.sh --lint
+
+      - name: Build release configuration
+        env:
+          CONFIGURATION: Release
+        run: scripts/build.sh
+
+      - name: Run unit and UI smoke tests
+        env:
+          ENABLE_CODE_COVERAGE: YES
+          RESULT_BUNDLE_PATH: ${{ runner.temp }}/PocketFinancer.xcresult
+        run: scripts/test.sh
+
+      - name: Export coverage report
+        if: always()
+        run: |
+          if [ -d "${{ runner.temp }}/PocketFinancer.xcresult" ]; then
+            xcrun xccov view --report --json "${{ runner.temp }}/PocketFinancer.xcresult" > "${{ runner.temp }}/coverage.json"
+          fi
+
+      - name: Upload test result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pocket-financer-test-result
+          path: |
+            ${{ runner.temp }}/PocketFinancer.xcresult
+            ${{ runner.temp }}/coverage.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,63 @@
+name: Pull request title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to validate on the selected ref
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  lint:
+    name: Conventional Commit title
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate title
+        if: github.event_name == 'pull_request'
+        uses: step-security/action-semantic-pull-request@75d2dd5deafa3e9fccc1626ecd58d076ed1d2c79 # v6.1.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            revert
+            test
+            docs
+            build
+            ci
+            chore
+          requireScope: false
+
+      - name: Validate a dispatched pull request title
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          pull_request="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+          head_ref="$(jq -r '.head.ref' <<< "$pull_request")"
+          head_sha="$(jq -r '.head.sha' <<< "$pull_request")"
+          title="$(jq -r '.title' <<< "$pull_request")"
+
+          if [ "$head_ref" != "$GITHUB_REF_NAME" ] || [ "$head_sha" != "$GITHUB_SHA" ]; then
+            echo "Selected ref does not match the pull request head." >&2
+            exit 1
+          fi
+
+          pattern='^(feat|fix|perf|refactor|revert|test|docs|build|ci|chore)(\([[:alnum:]./_-]+\))?!?: .+'
+          if ! grep -Eq "$pattern" <<< "$title"; then
+            echo "Pull request title must use an allowed Conventional Commit type." >&2
+            exit 1
+          fi
