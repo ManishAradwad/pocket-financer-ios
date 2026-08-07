@@ -40,17 +40,17 @@ struct FoundationModelTransactionParser: TransactionParsing {
     let requestMetadata: TransactionParserRequestMetadata
 
     private let model: SystemLanguageModel
-    private let requestLocale: Locale
+    private let processingLocale: Locale
 
     init(
-        locale: Locale = .current,
+        processingLocale: Locale = FoundationModelExtractionContract.modelProcessingLocale,
         model: SystemLanguageModel = .default
     ) {
-        requestLocale = locale
+        self.processingLocale = processingLocale
         self.model = model
         requestMetadata = TransactionParserRequestMetadata(
-            localeIdentifier: locale.identifier,
-            localeWasSupported: model.supportsLocale(locale),
+            localeIdentifier: processingLocale.identifier,
+            localeWasSupported: model.supportsLocale(processingLocale),
             supportedLanguageIdentifiers: ModelDiagnostics.languageIdentifiers(
                 model.supportedLanguages
             )
@@ -65,7 +65,7 @@ struct FoundationModelTransactionParser: TransactionParsing {
             throw TransactionParserError.modelUnavailable(Self.map(reason))
         }
 
-        guard model.supportsLocale(requestLocale) else {
+        guard model.supportsLocale(processingLocale) else {
             throw TransactionParserError.unsupportedLanguageOrLocale
         }
 

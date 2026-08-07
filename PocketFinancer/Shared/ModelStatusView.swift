@@ -59,19 +59,19 @@ struct ModelStatusView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Read-only locale comparison")
+                    Text("Language and region")
                         .fontWeight(.semibold)
                     ForEach(diagnostic.localeSupportProbes) { probe in
                         Text(
-                            "\(probe.label) [\(probe.localeIdentifier)]: \(probe.isSupported ? "Supported" : "Unsupported")"
+                            "\(probe.label) [\(probe.localeIdentifier)]: \(probeStatus(probe))"
                         )
                         .accessibilityLabel(probe.label)
-                        .accessibilityValue(probe.isSupported ? "Supported" : "Unsupported")
+                        .accessibilityValue(probeStatus(probe))
                     }
                     Text(
                         "Model-reported canonical language identifiers: \(diagnostic.supportedLanguageSummary)"
                     )
-                    Text("The comparison checks do not change which locale the parser uses.")
+                    Text("The phone formatting locale is kept separate and does not block model processing.")
                 }
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
@@ -79,5 +79,12 @@ struct ModelStatusView: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private func probeStatus(_ probe: ModelLocaleSupportProbe) -> String {
+        guard let isSupported = probe.isSupported else {
+            return "Used only for regional formatting"
+        }
+        return isSupported ? "Supported" : "Unsupported"
     }
 }

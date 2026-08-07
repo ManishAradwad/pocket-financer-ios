@@ -66,7 +66,7 @@ struct ModelSelfTestReportView: View {
         Section {
             LabeledContent("Contract version", value: report.contractVersion)
             LabeledContent("Profile version", value: report.profileVersion)
-            LabeledContent("Checked current locale", value: report.localeIdentifier)
+            LabeledContent("Checked model locale", value: report.localeIdentifier)
             LabeledContent("Locale support at start", value: localeSupportTitle)
             ReportTextField(
                 label: "Model language identifiers",
@@ -80,7 +80,7 @@ struct ModelSelfTestReportView: View {
             Text("Extraction contract")
         } footer: {
             Text(
-                "The parser captures Locale.current and checks it with supportsLocale before generation. Language identifiers come from supportedLanguages when Apple reports them; they do not reveal which iPhone or Siri setting caused a mismatch."
+                "The parser checks Pocket Financer's U.S. English model-processing locale with supportsLocale before generation. The phone's regional formatting locale remains separate. Language identifiers come from supportedLanguages when Apple reports them."
             )
         }
     }

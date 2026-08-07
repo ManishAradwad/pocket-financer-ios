@@ -420,7 +420,7 @@ enum ModelSelfTestService {
         case .assetsUnavailable:
             "Apple's local model assets are not ready. Keep this iPhone on Wi-Fi and power, then try again."
         case .unsupportedLanguageOrLocale:
-            "The local model rejected the checked current locale \(localeIdentifier). Confirm that the iPhone and Siri languages match a model-supported language. Apple's public API does not identify which system setting caused the mismatch."
+            "The local model rejected the checked model locale \(localeIdentifier) or detected an unsupported input language. Confirm that the iPhone and Siri languages match a supported English language. The iPhone region can remain India."
         case .guardrailViolation:
             "Apple's local model safety system blocked the synthetic financial alert."
         case .unsupportedGuide:

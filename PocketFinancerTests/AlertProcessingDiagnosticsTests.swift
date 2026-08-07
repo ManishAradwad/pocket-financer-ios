@@ -16,8 +16,8 @@ final class AlertProcessingDiagnosticsTests: XCTestCase {
         XCTAssertTrue(prompt.contains("</alert>"))
         XCTAssertFalse(prompt.localizedCaseInsensitiveContains("sender"))
         XCTAssertEqual(
-            FoundationModelExtractionContract.currentLocaleIdentifier,
-            Locale.current.identifier
+            FoundationModelExtractionContract.modelProcessingLocaleIdentifier,
+            "en-US"
         )
         XCTAssertEqual(
             FoundationModelExtractionContract.timeoutDescription,

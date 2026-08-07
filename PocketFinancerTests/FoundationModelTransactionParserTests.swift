@@ -6,8 +6,19 @@ import XCTest
 
 final class FoundationModelTransactionParserTests: XCTestCase {
     @MainActor
+    func testDefaultParserUsesTheContractModelLocaleInsteadOfTheFormattingLocale() {
+        let parser = FoundationModelTransactionParser()
+
+        XCTAssertEqual(
+            parser.requestMetadata.localeIdentifier,
+            FoundationModelExtractionContract.modelProcessingLocaleIdentifier
+        )
+        XCTAssertEqual(parser.requestMetadata.localeIdentifier, "en-US")
+    }
+
+    @MainActor
     func testParserCapturesExactRequestedLocaleAndSortedModelLanguages() {
-        let parser = FoundationModelTransactionParser(locale: Locale(identifier: "en_IN"))
+        let parser = FoundationModelTransactionParser(processingLocale: Locale(identifier: "en_IN"))
 
         XCTAssertEqual(parser.requestMetadata.localeIdentifier, "en_IN")
         XCTAssertEqual(

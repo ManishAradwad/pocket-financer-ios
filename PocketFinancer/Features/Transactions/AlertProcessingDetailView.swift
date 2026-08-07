@@ -207,10 +207,14 @@ struct AlertProcessingDetailView: View {
             LabeledContent("System model", value: "SystemLanguageModel.default")
 
             if let modelDiagnostic {
-                LabeledContent("Current app locale", value: modelDiagnostic.localeIdentifier)
+                LabeledContent("Model processing locale", value: modelDiagnostic.localeIdentifier)
                 LabeledContent(
-                    "Current locale supported",
+                    "Model locale supported",
                     value: modelDiagnostic.localeWasSupported ? "Yes" : "No"
+                )
+                LabeledContent(
+                    "Phone formatting locale",
+                    value: modelDiagnostic.formattingLocaleIdentifier
                 )
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Model language identifiers")
@@ -542,9 +546,9 @@ private struct ExtractionRunDisclosure: View {
             auditValue("Parser", run.parserName)
             auditValue("Contract version", run.contractVersion)
             auditValue("Extraction profile version", run.profileVersion)
-            auditValue("Checked locale", run.localeIdentifier)
+            auditValue("Checked model processing locale", run.localeIdentifier)
             auditValue(
-                "Locale supported at request start",
+                "Processing locale supported at request start",
                 run.localeWasSupported.map { $0 ? "Yes" : "No" } ?? "Not recorded"
             )
             auditValue(

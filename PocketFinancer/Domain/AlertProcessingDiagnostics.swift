@@ -108,7 +108,7 @@ enum AlertProcessingDiagnostics {
             .init(
                 title: "Language or locale unsupported",
                 detail:
-                    "Apple's model rejected the checked app locale or request language. Confirm that iPhone and Siri languages match a model-supported language; Apple does not identify which setting caused a mismatch."
+                    "Apple's model rejected Pocket Financer's checked U.S. English model locale or detected an unsupported request language. The phone's India region is separate and can remain unchanged."
             )
         case "model_guardrail_violation":
             .init(

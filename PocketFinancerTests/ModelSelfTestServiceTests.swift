@@ -109,7 +109,7 @@ final class ModelSelfTestServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testUnsupportedLocaleFailureNamesExactCheckedLocaleWithoutInventingCause() async {
+    func testUnsupportedLocaleFailureNamesExactCheckedModelLocale() async {
         let metadata = TransactionParserRequestMetadata(
             localeIdentifier: "zz_IN",
             localeWasSupported: false,
@@ -129,7 +129,7 @@ final class ModelSelfTestServiceTests: XCTestCase {
         XCTAssertEqual(result.supportedLanguageIdentifiers, ["en", "hi"])
         XCTAssertTrue(result.failure?.ownerMessage.contains("zz_IN") == true)
         XCTAssertTrue(result.failure?.ownerMessage.contains("iPhone and Siri languages") == true)
-        XCTAssertTrue(result.failure?.ownerMessage.contains("does not identify") == true)
+        XCTAssertTrue(result.failure?.ownerMessage.contains("region can remain India") == true)
     }
 
     @MainActor

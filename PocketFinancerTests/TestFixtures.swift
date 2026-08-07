@@ -5,7 +5,7 @@ import Foundation
 enum TestFixtures {
     static let receivedAt = Date(timeIntervalSince1970: 1_785_955_200)
     static let parserRequestMetadata = TransactionParserRequestMetadata(
-        localeIdentifier: "en_IN",
+        localeIdentifier: "en-US",
         localeWasSupported: true,
         supportedLanguageIdentifiers: ["en", "hi"]
     )

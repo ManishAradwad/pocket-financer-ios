@@ -17,10 +17,11 @@ struct ParsedAlertDraft: Equatable, Sendable {
 
 /// Public, owner-visible configuration captured before one parser request starts.
 ///
-/// A Foundation Models parser reports the exact `Locale` identifier it will pass to
-/// `supportsLocale`, whether that check succeeded when the metadata was captured, and
-/// the language identifiers advertised by the system model. Deterministic test parsers
-/// may leave model-only fields unavailable.
+/// A Foundation Models parser reports the exact model-processing `Locale` identifier it
+/// checks with `supportsLocale`, whether that check succeeded when the metadata was
+/// captured, and the language identifiers advertised by the system model. This locale
+/// is intentionally independent of `Locale.current`, which remains available for regional
+/// formatting. Deterministic test parsers may leave model-only fields unavailable.
 struct TransactionParserRequestMetadata: Equatable, Sendable {
     let localeIdentifier: String
     let localeWasSupported: Bool?
@@ -41,7 +42,7 @@ protocol TransactionParsing: Sendable {
 extension TransactionParsing {
     var requestMetadata: TransactionParserRequestMetadata {
         TransactionParserRequestMetadata(
-            localeIdentifier: Locale.current.identifier,
+            localeIdentifier: FoundationModelExtractionContract.modelProcessingLocaleIdentifier,
             localeWasSupported: nil,
             supportedLanguageIdentifiers: []
         )

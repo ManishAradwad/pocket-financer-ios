@@ -1,6 +1,6 @@
 # Physical-device validation
 
-These checks cannot be proven by a simulator or CI. Run them on the signed iPhone 16 before calling automatic ingestion production-ready. Record the Xcode build, iOS build number, iPhone and Siri languages, the exact app locale and model-language identifiers shown by Pocket Financer, and observed payload fields without copying real message contents.
+These checks cannot be proven by a simulator or CI. Run them on the signed iPhone 16 before calling automatic ingestion production-ready. Record the Xcode build, iOS build number, iPhone and Siri languages, the separate app-formatting and model-processing locale identifiers shown by Pocket Financer, the model-language identifiers, and the synthetic generation result without copying real message contents.
 
 ## Stable iOS 26 path
 

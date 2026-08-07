@@ -8,21 +8,22 @@ final class ModelDiagnosticsTests: XCTestCase {
     func testSupportedLocaleDiagnosticPreservesExactLocaleAndSortedLanguages() {
         let diagnostic = ModelDiagnostics.makeDiagnostic(
             availability: .available,
-            localeIdentifier: "en_IN",
+            localeIdentifier: "en-US",
             localeWasSupported: true,
             localeSupportProbes: localeSupportProbes(currentSupported: true),
             supportedLanguageIdentifiers: ["hi", "en", "en"]
         )
 
         XCTAssertTrue(diagnostic.isReady)
-        XCTAssertEqual(diagnostic.localeIdentifier, "en_IN")
+        XCTAssertEqual(diagnostic.localeIdentifier, "en-US")
         XCTAssertTrue(diagnostic.localeWasSupported)
+        XCTAssertEqual(diagnostic.formattingLocaleIdentifier, "en_IN")
         XCTAssertEqual(diagnostic.supportedLanguageIdentifiers, ["en", "hi"])
         XCTAssertEqual(diagnostic.supportedLanguageSummary, "en, hi")
     }
 
     @MainActor
-    func testUnsupportedLocaleExplainsLanguageAlignmentWithoutInventingCause() {
+    func testUnsupportedModelLocaleExplainsLanguageAlignmentAndKeepsIndiaRegion() {
         let diagnostic = ModelDiagnostics.makeDiagnostic(
             availability: .available,
             localeIdentifier: "zz_IN",
@@ -32,16 +33,16 @@ final class ModelDiagnosticsTests: XCTestCase {
         )
 
         XCTAssertFalse(diagnostic.isReady)
-        XCTAssertEqual(diagnostic.title, "Current app locale unsupported")
-        XCTAssertTrue(diagnostic.detail.contains("iPhone language and Siri language"))
-        XCTAssertTrue(diagnostic.detail.contains("does not identify"))
+        XCTAssertEqual(diagnostic.title, "Model processing language unsupported")
+        XCTAssertTrue(diagnostic.detail.contains("iPhone and Siri languages"))
+        XCTAssertTrue(diagnostic.detail.contains("region can remain India"))
     }
 
     @MainActor
     func testModelNotReadyDoesNotClaimPrivateDownloadReason() {
         let diagnostic = ModelDiagnostics.makeDiagnostic(
             availability: .modelNotReady,
-            localeIdentifier: "en_IN",
+            localeIdentifier: "en-US",
             localeWasSupported: true,
             localeSupportProbes: localeSupportProbes(currentSupported: true),
             supportedLanguageIdentifiers: []
@@ -70,30 +71,25 @@ final class ModelDiagnosticsTests: XCTestCase {
     }
 
     @MainActor
-    func testLocaleSupportProbesCompareCurrentIndiaAndUSWithoutChangingCurrentResult() {
+    func testLocaleSupportProbesSeparateModelLanguageFromPhoneFormatting() {
         let probes = ModelDiagnostics.makeLocaleSupportProbes(
-            currentLocale: Locale(identifier: "en_IN"),
-            currentLocaleWasSupported: false,
-            supportsLocale: { $0.region?.identifier == "US" }
+            modelLocale: Locale(identifier: "en-US"),
+            modelLocaleWasSupported: true,
+            formattingLocale: Locale(identifier: "en_IN")
         )
 
         XCTAssertEqual(
             probes,
             [
                 ModelLocaleSupportProbe(
-                    label: "Current app locale (primary)",
-                    localeIdentifier: "en_IN",
-                    isSupported: false
-                ),
-                ModelLocaleSupportProbe(
-                    label: "English (India) diagnostic",
-                    localeIdentifier: "en-IN",
-                    isSupported: false
-                ),
-                ModelLocaleSupportProbe(
-                    label: "English (US) control",
+                    label: "Model processing locale",
                     localeIdentifier: "en-US",
                     isSupported: true
+                ),
+                ModelLocaleSupportProbe(
+                    label: "Phone formatting locale",
+                    localeIdentifier: "en_IN",
+                    isSupported: nil
                 ),
             ]
         )
@@ -111,7 +107,7 @@ final class ModelDiagnosticsTests: XCTestCase {
         let calls = CallRecorder()
 
         let diagnostic = await ModelDiagnostics.loadCurrent(
-            locale: Locale(identifier: "en_IN"),
+            processingLocale: Locale(identifier: "en-US"),
             using: { _ in
                 calls.record()
                 return expectedDiagnostic
@@ -140,19 +136,14 @@ final class ModelDiagnosticsTests: XCTestCase {
     private func localeSupportProbes(currentSupported: Bool) -> [ModelLocaleSupportProbe] {
         [
             ModelLocaleSupportProbe(
-                label: "Current app locale (primary)",
-                localeIdentifier: "en_IN",
-                isSupported: currentSupported
-            ),
-            ModelLocaleSupportProbe(
-                label: "English (India) diagnostic",
-                localeIdentifier: "en-IN",
-                isSupported: currentSupported
-            ),
-            ModelLocaleSupportProbe(
-                label: "English (US) control",
+                label: "Model processing locale",
                 localeIdentifier: "en-US",
-                isSupported: true
+                isSupported: currentSupported
+            ),
+            ModelLocaleSupportProbe(
+                label: "Phone formatting locale",
+                localeIdentifier: "en_IN",
+                isSupported: nil
             ),
         ]
     }

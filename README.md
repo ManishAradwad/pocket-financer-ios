@@ -22,7 +22,7 @@ Financial alerts, prompts, model output, and transactions are not sent to a Pock
 - Deterministic currency/account/verb checks plus OTP and collect-request rejection.
 - Same-sender/body duplicate protection for overlapping `Rs`, `INR`, and `₹` automations; an omitted sender is treated consistently.
 - Structured local model extraction with strict source-evidence validation and manual review on uncertainty.
-- Runtime locale validation using `supportsLocale(Locale.current)`, with the exact checked locale and model-reported language identifiers visible to the owner.
+- Runtime validation of the app's U.S. English model-processing locale with `supportsLocale`, while `Locale.current` remains separate for India-region formatting; both identifiers are visible to the owner.
 - Owner-visible V2 processing history: exact request/instructions, post-schema parser draft, per-field validation stages, timing, safe code, disposition, immutable accepted snapshot, and a separate owner-edited ledger.
 - A detailed, in-memory synthetic on-device model report, bounded retry, serialized model requests, and honest Apple API limits.
 - Dashboard, transactions, editing, manual import, queue diagnostics, privacy details, and confirmed local erasure.
@@ -61,7 +61,7 @@ The V2 SwiftData schema creates one protected `ExtractionRun` for every live-ing
 
 That persisted draft is the exact structured value Pocket Financer uses after schema mapping. The current adapter intentionally does not retain `Response.rawContent` or the session transcript, and Apple's API does not expose hidden reasoning. The processing screen separately shows the mutable current ledger transaction. Later owner edits do not rewrite the historical parser draft, validation record, or accepted snapshot.
 
-**Run Synthetic Model Test** opens a detailed report containing the exact synthetic input, instructions, request, checked current locale, result of the locale support check, model-reported language identifiers, returned draft when available, validation result, safe failure, timing, configuration, and API limits. The report remains in memory, creates no transaction, and is released when its sheet is dismissed.
+**Run Synthetic Model Test** opens a detailed report containing the exact synthetic input, instructions, request, checked model-processing locale, result of the locale support check, model-reported language identifiers, returned draft when available, validation result, safe failure, timing, configuration, and API limits. The report remains in memory, creates no transaction, and is released when its sheet is dismissed.
 
 The public iOS 26 Foundation Models interface used by this build does not expose hidden reasoning, a stable owner-readable model build/version, per-request token counts or tokens per second, numeric context-window capacity, KV-cache details, or numeric confidence. It can report that a request exceeded its context window without revealing the window's size. Pocket Financer states those limitations instead of fabricating metrics. Exact prompts and persisted drafts are owner-visible local data only: they must never be copied into logs, telemetry, CI artifacts, source fixtures, screenshots, or issue reports. See [processing transparency](docs/processing-transparency.md) for the audit contract.
 
@@ -70,7 +70,7 @@ The public iOS 26 Foundation Models interface used by this build does not expose
 - macOS 26 or newer with Xcode 26 or newer.
 - iOS 26 or newer for the app.
 - A physical Apple Intelligence-capable iPhone for Foundation Models validation; current development targets iPhone 16.
-- Apple Intelligence enabled with its on-device assets downloaded, and iPhone and Siri languages aligned to the same supported language.
+- Apple Intelligence enabled with its on-device assets downloaded, and iPhone and Siri languages aligned to the same supported English language. The phone's Region may remain India.
 - An Apple Development team for physical-device signing. A free Personal Team works for development installs.
 
 This project is iPhone-only. The simulator is useful for UI, persistence, and deterministic tests, but a simulator availability result does not prove that Foundation Models assets can generate successfully.
@@ -128,7 +128,7 @@ On a freshly installed physical-device build:
 4. Record only the privacy-safe result category and latency outside the app. Do not screenshot or attach the detailed report to an issue.
 5. Only proceed to live automation validation after the synthetic alert passes or its specific retryable failure is understood.
 
-The app distinguishes model assets that are unavailable, unsupported language/locale, refusal or guardrail behavior, schema/decoding incompatibility, rate limiting, concurrent requests, timeout, and device eligibility. It checks the app's captured `Locale.current` with `supportsLocale` instead of assuming U.S. English. When Apple reports `modelNotReady` or an unsupported locale, the app explains the public category and corrective checks without claiming access to a private cause. Retryable failures remain durable; terminal failures retain evidence for manual review.
+The app distinguishes model assets that are unavailable, unsupported language/locale, refusal or guardrail behavior, schema/decoding incompatibility, rate limiting, concurrent requests, timeout, and device eligibility. Its prompts and requested output are U.S. English, so it checks the explicit `en-US` model-processing locale with `supportsLocale`; the phone's `Locale.current` remains independent for India-region dates, numbers, and currency. This check is only a preflight because `LanguageModelSession` has no locale parameter and can still reject an unsupported input language during generation. Retryable failures remain durable, and any language failure retains evidence for manual review instead of creating a transaction.
 
 ## Configure the Message automation
 

@@ -7,15 +7,20 @@ import Foundation
 /// `ExtractionRun` audit record. They must never enter logs, telemetry, exports, or reports.
 enum FoundationModelExtractionContract {
     static let parserName = "Apple Foundation Models"
-    static let contractVersion = "foundation-transaction-extraction.v1"
-    static let extractionProfileVersion = "1"
+    static let contractVersion = "foundation-transaction-extraction.v2"
+    static let extractionProfileVersion = "2"
     static let timeout: Duration = .seconds(60)
     static let timeoutDescription = "Cancellation requested after 60 seconds"
     static let guardrailsDescription = "Apple default guardrails"
     static let requestSchedulingDescription = "Serialized — one model request at a time"
 
-    static var currentLocaleIdentifier: String {
-        Locale.current.identifier
+    /// Pocket Financer's prompts, schema guidance, and requested output are U.S. English.
+    /// Keep this linguistic locale separate from `Locale.current`, which also incorporates
+    /// the phone's regional formatting choice (for example, India).
+    nonisolated static let modelProcessingLocale = Locale(identifier: "en-US")
+
+    nonisolated static var modelProcessingLocaleIdentifier: String {
+        modelProcessingLocale.identifier
     }
 
     static let structuredSchemaMapping = [

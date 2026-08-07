@@ -19,7 +19,7 @@ Pocket Financer provides owner-visible local audit without pretending that Apple
 
 Every eligible ingestion or retry parser invocation appends one protected local `ExtractionRun` linked to its `InboxAlert`. The pipeline saves observable boundaries in order:
 
-1. Before inference: run ID, alert ID, attempt index, parser/contract/profile identity, the exact captured `Locale.current` identifier checked with `supportsLocale`, start time, exact instructions, and exact request.
+1. Before inference: run ID, alert ID, attempt index, parser/contract/profile identity, the exact U.S. English model-processing locale identifier checked with `supportsLocale`, start time, exact instructions, and exact request. `Locale.current` remains separate for regional formatting.
 2. After a mapped response: response time and every `ParsedAlertDraft` field.
 3. After validation: passed/failed/not-run state for classification, direction, amount, merchant, account, and date.
 4. At termination: completion time, safe result code, and imported/queued/needs-review disposition.
@@ -45,7 +45,7 @@ Historical runs are the source of truth for what a particular attempt used and p
 **Run Synthetic Model Test** exercises the same parser contract and evidence validator using a rewritten synthetic alert. Its detailed report includes:
 
 - the exact synthetic body, sender metadata, and one receipt time shared by parsing and validation;
-- parser, contract/profile version, exact checked current locale, locale-support result, model-reported language identifiers, cancellation threshold, scheduling, guardrails, start/completion time, and elapsed wall-clock time;
+- parser, contract/profile version, exact checked model-processing locale, locale-support result, model-reported language identifiers, cancellation threshold, scheduling, guardrails, start/completion time, and elapsed wall-clock time;
 - exact instructions and request;
 - every returned post-schema `ParsedAlertDraft` field, or an explicit no-draft state;
 - validation outcome, safe code, explanation, and validated fields when successful;

@@ -62,6 +62,9 @@ final class AlertIngestionServiceTests: XCTestCase {
         XCTAssertEqual(run.contractVersion, FoundationModelExtractionContract.contractVersion)
         XCTAssertEqual(run.profileVersion, FoundationModelExtractionContract.extractionProfileVersion)
         XCTAssertEqual(run.localeIdentifier, parser.requestMetadata.localeIdentifier)
+        XCTAssertEqual(run.contractVersion, "foundation-transaction-extraction.v2")
+        XCTAssertEqual(run.profileVersion, "2")
+        XCTAssertEqual(run.localeIdentifier, "en-US")
         XCTAssertEqual(run.exactInstructions, FoundationModelExtractionContract.instructions)
         XCTAssertEqual(
             run.exactRequest,

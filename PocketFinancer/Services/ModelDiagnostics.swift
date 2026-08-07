@@ -4,7 +4,8 @@ import FoundationModels
 struct ModelLocaleSupportProbe: Equatable, Identifiable, Sendable {
     let label: String
     let localeIdentifier: String
-    let isSupported: Bool
+    /// `nil` means the locale is shown for context and is not used to gate model work.
+    let isSupported: Bool?
 
     var id: String { label }
 }
@@ -23,6 +24,11 @@ struct ModelDiagnostic: Equatable, Sendable {
             ? "Not reported by the system model right now"
             : supportedLanguageIdentifiers.joined(separator: ", ")
     }
+
+    var formattingLocaleIdentifier: String {
+        localeSupportProbes.first { $0.isSupported == nil }?.localeIdentifier
+            ?? "Not reported"
+    }
 }
 
 enum ModelAvailabilityDiagnosticState: Equatable, Sendable {
@@ -37,39 +43,51 @@ enum ModelDiagnostics {
     private final class CurrentLoadAttempt {
         let task: Task<ModelDiagnostic, Never>
 
-        init(locale: Locale) {
+        init(processingLocale: Locale, formattingLocale: Locale) {
             task = Task.detached(priority: .utility) {
-                ModelDiagnostics.current(locale: locale)
+                ModelDiagnostics.current(
+                    processingLocale: processingLocale,
+                    formattingLocale: formattingLocale
+                )
             }
         }
     }
 
     private static var currentLoadAttempts: [String: CurrentLoadAttempt] = [:]
 
-    nonisolated static func current(locale: Locale = .current) -> ModelDiagnostic {
+    nonisolated static func current(
+        processingLocale: Locale = FoundationModelExtractionContract.modelProcessingLocale,
+        formattingLocale: Locale = .current
+    ) -> ModelDiagnostic {
         let model = SystemLanguageModel.default
-        let localeWasSupported = model.supportsLocale(locale)
+        let localeWasSupported = model.supportsLocale(processingLocale)
         return makeDiagnostic(
             availability: availabilityState(model.availability),
-            localeIdentifier: locale.identifier,
+            localeIdentifier: processingLocale.identifier,
             localeWasSupported: localeWasSupported,
             localeSupportProbes: makeLocaleSupportProbes(
-                currentLocale: locale,
-                currentLocaleWasSupported: localeWasSupported,
-                supportsLocale: { model.supportsLocale($0) }
+                modelLocale: processingLocale,
+                modelLocaleWasSupported: localeWasSupported,
+                formattingLocale: formattingLocale
             ),
             supportedLanguageIdentifiers: languageIdentifiers(model.supportedLanguages)
         )
     }
 
     @MainActor
-    static func loadCurrent(locale: Locale = .current) async -> ModelDiagnostic {
-        let key = locale.identifier
+    static func loadCurrent(
+        processingLocale: Locale = FoundationModelExtractionContract.modelProcessingLocale,
+        formattingLocale: Locale = .current
+    ) async -> ModelDiagnostic {
+        let key = "\(processingLocale.identifier)|\(formattingLocale.identifier)"
         let attempt: CurrentLoadAttempt
         if let currentAttempt = currentLoadAttempts[key] {
             attempt = currentAttempt
         } else {
-            attempt = CurrentLoadAttempt(locale: locale)
+            attempt = CurrentLoadAttempt(
+                processingLocale: processingLocale,
+                formattingLocale: formattingLocale
+            )
             currentLoadAttempts[key] = attempt
         }
 
@@ -81,39 +99,29 @@ enum ModelDiagnostics {
     }
 
     nonisolated static func loadCurrent(
-        locale: Locale,
+        processingLocale: Locale,
         using load: @escaping @Sendable (Locale) -> ModelDiagnostic
     ) async -> ModelDiagnostic {
         await Task.detached(priority: .utility) {
-            load(locale)
+            load(processingLocale)
         }.value
     }
 
     nonisolated static func makeLocaleSupportProbes(
-        currentLocale: Locale,
-        currentLocaleWasSupported: Bool,
-        supportsLocale: (Locale) -> Bool
+        modelLocale: Locale,
+        modelLocaleWasSupported: Bool,
+        formattingLocale: Locale
     ) -> [ModelLocaleSupportProbe] {
-        let englishIndiaIdentifier = "en-IN"
-        let englishUSIdentifier = "en-US"
-        let englishIndia = Locale(identifier: englishIndiaIdentifier)
-        let englishUS = Locale(identifier: englishUSIdentifier)
-
         return [
             ModelLocaleSupportProbe(
-                label: "Current app locale (primary)",
-                localeIdentifier: currentLocale.identifier,
-                isSupported: currentLocaleWasSupported
+                label: "Model processing locale",
+                localeIdentifier: modelLocale.identifier,
+                isSupported: modelLocaleWasSupported
             ),
             ModelLocaleSupportProbe(
-                label: "English (India) diagnostic",
-                localeIdentifier: englishIndiaIdentifier,
-                isSupported: supportsLocale(englishIndia)
-            ),
-            ModelLocaleSupportProbe(
-                label: "English (US) control",
-                localeIdentifier: englishUSIdentifier,
-                isSupported: supportsLocale(englishUS)
+                label: "Phone formatting locale",
+                localeIdentifier: formattingLocale.identifier,
+                isSupported: nil
             ),
         ]
     }
@@ -139,7 +147,7 @@ enum ModelDiagnostics {
                 isReady: true,
                 title: "On-device model available",
                 detail:
-                    "Apple's public locale check passed for the current app locale. Run the synthetic test to verify structured extraction on this OS and device.",
+                    "Apple's public locale check passed for Pocket Financer's U.S. English model language. Your iPhone can keep its India region for dates, numbers, and currency formatting.",
                 localeIdentifier: localeIdentifier,
                 localeWasSupported: true,
                 localeSupportProbes: localeSupportProbes,
@@ -148,9 +156,9 @@ enum ModelDiagnostics {
         case .available:
             return ModelDiagnostic(
                 isReady: false,
-                title: "Current app locale unsupported",
+                title: "Model processing language unsupported",
                 detail:
-                    "Apple reports this locale as unsupported. Confirm that the iPhone language and Siri language use the same model-supported language, then reopen Pocket Financer. The public API does not identify which system setting caused a mismatch.",
+                    "Apple reports Pocket Financer's U.S. English model locale as unsupported. Confirm that the iPhone and Siri languages use the same supported English language, then reopen the app. The iPhone region can remain India.",
                 localeIdentifier: localeIdentifier,
                 localeWasSupported: false,
                 localeSupportProbes: localeSupportProbes,
