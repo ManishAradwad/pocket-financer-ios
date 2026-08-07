@@ -33,13 +33,10 @@ final class PocketFinancerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["On-device intelligence"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["model-self-test"].exists)
         XCTAssertTrue(app.buttons["model-self-test"].isEnabled)
-        XCTAssertTrue(app.staticTexts["Local inbox diagnostics"].exists)
+        XCTAssertTrue(reveal(app.staticTexts["Local inbox diagnostics"], in: app))
 
         let eraseButton = app.buttons["erase-all-data"]
-        for _ in 0..<4 where !eraseButton.exists {
-            app.swipeUp()
-        }
-        XCTAssertTrue(eraseButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(reveal(eraseButton, in: app))
     }
 
     @MainActor
@@ -87,5 +84,25 @@ final class PocketFinancerUITests: XCTestCase {
         ]
         app.launch()
         return app
+    }
+
+    @MainActor
+    private func reveal(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        maximumSwipes: Int = 6
+    ) -> Bool {
+        if element.waitForExistence(timeout: 1) {
+            return true
+        }
+
+        for _ in 0..<maximumSwipes {
+            app.swipeUp()
+            if element.waitForExistence(timeout: 1) {
+                return true
+            }
+        }
+
+        return false
     }
 }
