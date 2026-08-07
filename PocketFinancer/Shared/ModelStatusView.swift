@@ -18,12 +18,20 @@ struct ModelStatusView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Checked current locale: \(diagnostic.localeIdentifier)")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Read-only locale comparison")
+                        .fontWeight(.semibold)
+                    ForEach(diagnostic.localeSupportProbes) { probe in
+                        Text(
+                            "\(probe.label) [\(probe.localeIdentifier)]: \(probe.isSupported ? "Supported" : "Unsupported")"
+                        )
+                        .accessibilityLabel(probe.label)
+                        .accessibilityValue(probe.isSupported ? "Supported" : "Unsupported")
+                    }
                     Text(
-                        "Locale support reported: \(diagnostic.localeWasSupported ? "Yes" : "No")"
+                        "Model-reported canonical language identifiers: \(diagnostic.supportedLanguageSummary)"
                     )
-                    Text("Model language identifiers: \(diagnostic.supportedLanguageSummary)")
+                    Text("The comparison checks do not change which locale the parser uses.")
                 }
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)

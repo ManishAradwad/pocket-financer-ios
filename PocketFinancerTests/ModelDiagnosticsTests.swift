@@ -10,6 +10,7 @@ final class ModelDiagnosticsTests: XCTestCase {
             availability: .available,
             localeIdentifier: "en_IN",
             localeWasSupported: true,
+            localeSupportProbes: localeSupportProbes(currentSupported: true),
             supportedLanguageIdentifiers: ["hi", "en", "en"]
         )
 
@@ -26,6 +27,7 @@ final class ModelDiagnosticsTests: XCTestCase {
             availability: .available,
             localeIdentifier: "zz_IN",
             localeWasSupported: false,
+            localeSupportProbes: localeSupportProbes(currentSupported: false),
             supportedLanguageIdentifiers: ["en", "hi"]
         )
 
@@ -41,6 +43,7 @@ final class ModelDiagnosticsTests: XCTestCase {
             availability: .modelNotReady,
             localeIdentifier: "en_IN",
             localeWasSupported: true,
+            localeSupportProbes: localeSupportProbes(currentSupported: true),
             supportedLanguageIdentifiers: []
         )
 
@@ -64,5 +67,55 @@ final class ModelDiagnosticsTests: XCTestCase {
         XCTAssertEqual(Set(identifiers).count, identifiers.count)
         XCTAssertTrue(identifiers.contains("en"))
         XCTAssertTrue(identifiers.contains("hi"))
+    }
+
+    @MainActor
+    func testLocaleSupportProbesCompareCurrentIndiaAndUSWithoutChangingCurrentResult() {
+        let probes = ModelDiagnostics.makeLocaleSupportProbes(
+            currentLocale: Locale(identifier: "en_IN"),
+            currentLocaleWasSupported: false,
+            supportsLocale: { $0.region?.identifier == "US" }
+        )
+
+        XCTAssertEqual(
+            probes,
+            [
+                ModelLocaleSupportProbe(
+                    label: "Current app locale (primary)",
+                    localeIdentifier: "en_IN",
+                    isSupported: false
+                ),
+                ModelLocaleSupportProbe(
+                    label: "English (India) diagnostic",
+                    localeIdentifier: "en-IN",
+                    isSupported: false
+                ),
+                ModelLocaleSupportProbe(
+                    label: "English (US) control",
+                    localeIdentifier: "en-US",
+                    isSupported: true
+                ),
+            ]
+        )
+    }
+
+    private func localeSupportProbes(currentSupported: Bool) -> [ModelLocaleSupportProbe] {
+        [
+            ModelLocaleSupportProbe(
+                label: "Current app locale (primary)",
+                localeIdentifier: "en_IN",
+                isSupported: currentSupported
+            ),
+            ModelLocaleSupportProbe(
+                label: "English (India) diagnostic",
+                localeIdentifier: "en-IN",
+                isSupported: currentSupported
+            ),
+            ModelLocaleSupportProbe(
+                label: "English (US) control",
+                localeIdentifier: "en-US",
+                isSupported: true
+            ),
+        ]
     }
 }
