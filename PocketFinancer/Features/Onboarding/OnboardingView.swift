@@ -5,7 +5,6 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @State private var page = 0
-    private let modelDiagnostic = ModelDiagnostics.current()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +30,7 @@ struct OnboardingView: View {
                         "Apple's on-device model extracts a draft; Pocket Financer verifies its evidence before saving.",
                     tint: .purple
                 ) {
-                    ModelStatusView(diagnostic: modelDiagnostic)
+                    CurrentModelStatusView()
                         .padding(18)
                         .glassEffect(.regular, in: .rect(cornerRadius: 22))
                 }

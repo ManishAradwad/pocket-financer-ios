@@ -65,7 +65,7 @@ struct HomeView: View {
                         .buttonStyle(.glass)
                     }
 
-                    ModelStatusView(diagnostic: ModelDiagnostics.current())
+                    CurrentModelStatusView()
 
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {

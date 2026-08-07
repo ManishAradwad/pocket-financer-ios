@@ -116,22 +116,57 @@ struct AppDatabaseStartupFailure: Error, Equatable, Sendable {
 
 @MainActor
 final class AppDatabase {
+    private final class SharedOpenAttempt {
+        let task: Task<AppDatabase, Error>
+
+        init() {
+            task = Task.detached(priority: .userInitiated) {
+                try AppDatabase()
+            }
+        }
+    }
+
     private static var sharedInstance: AppDatabase?
+    private static var sharedOpenAttempt: SharedOpenAttempt?
 
     let container: ModelContainer
     let storeURL: URL?
 
-    static func openShared() throws -> AppDatabase {
+    static func openShared() async throws -> AppDatabase {
         if let sharedInstance {
             return sharedInstance
         }
 
-        let database = try AppDatabase()
-        sharedInstance = database
-        return database
+        let attempt: SharedOpenAttempt
+        if let sharedOpenAttempt {
+            attempt = sharedOpenAttempt
+        } else {
+            attempt = SharedOpenAttempt()
+            sharedOpenAttempt = attempt
+        }
+
+        do {
+            let database = try await attempt.task.value
+            if let sharedInstance {
+                if sharedOpenAttempt === attempt {
+                    sharedOpenAttempt = nil
+                }
+                return sharedInstance
+            }
+            sharedInstance = database
+            if sharedOpenAttempt === attempt {
+                sharedOpenAttempt = nil
+            }
+            return database
+        } catch {
+            if sharedOpenAttempt === attempt {
+                sharedOpenAttempt = nil
+            }
+            throw error
+        }
     }
 
-    init(inMemory: Bool = false, storeURL explicitStoreURL: URL? = nil) throws {
+    nonisolated init(inMemory: Bool = false, storeURL explicitStoreURL: URL? = nil) throws {
         let schema = Schema(versionedSchema: PocketFinancerSchemaV2.self)
 
         if inMemory {

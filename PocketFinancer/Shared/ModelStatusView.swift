@@ -1,5 +1,45 @@
 import SwiftUI
 
+struct CurrentModelStatusView: View {
+    @State private var diagnostic: ModelDiagnostic?
+
+    var body: some View {
+        Group {
+            if let diagnostic {
+                ModelStatusView(diagnostic: diagnostic)
+            } else {
+                ModelStatusLoadingView()
+            }
+        }
+        .task {
+            guard diagnostic == nil else { return }
+            let loadedDiagnostic = await ModelDiagnostics.loadCurrent()
+            guard !Task.isCancelled else { return }
+            diagnostic = loadedDiagnostic
+        }
+    }
+}
+
+struct ModelStatusLoadingView: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Checking on-device model")
+                    .font(.headline)
+                Text("Pocket Financer remains usable while this check finishes.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("model-status-loading")
+    }
+}
+
 struct ModelStatusView: View {
     let diagnostic: ModelDiagnostic
 

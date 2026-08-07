@@ -1,7 +1,7 @@
 import Foundation
 
 enum SecureStoreFilePolicy {
-    static func prepareDirectory(_ directoryURL: URL) throws {
+    nonisolated static func prepareDirectory(_ directoryURL: URL) throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(
             at: directoryURL,
@@ -11,7 +11,7 @@ enum SecureStoreFilePolicy {
         try apply(to: directoryURL)
     }
 
-    static func applyToStoreFiles(at storeURL: URL) throws {
+    nonisolated static func applyToStoreFiles(at storeURL: URL) throws {
         try apply(to: storeURL.deletingLastPathComponent())
         for suffix in ["", "-wal", "-shm"] {
             let candidate = URL(filePath: storeURL.path + suffix)
@@ -21,7 +21,7 @@ enum SecureStoreFilePolicy {
         }
     }
 
-    private static func apply(to url: URL) throws {
+    nonisolated private static func apply(to url: URL) throws {
         try FileManager.default.setAttributes(
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: url.path

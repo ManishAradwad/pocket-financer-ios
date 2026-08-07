@@ -85,11 +85,13 @@ final class AlertIngestionService {
         receivedAt: Date?,
         sourceApplication: String?,
         origin: AlertOrigin,
-        openDatabase: () throws -> AppDatabase = { try AppDatabase.openShared() }
-    ) throws -> IngestionReceipt {
+        openDatabase: @MainActor () async throws -> AppDatabase = {
+            try await AppDatabase.openShared()
+        }
+    ) async throws -> IngestionReceipt {
         let database: AppDatabase
         do {
-            database = try openDatabase()
+            database = try await openDatabase()
             try database.refreshFileProtection()
         } catch {
             throw AlertIngestionError.storeUnavailable
@@ -111,11 +113,13 @@ final class AlertIngestionService {
         receivedAt: Date?,
         sourceApplication: String?,
         origin: AlertOrigin,
-        openDatabase: () throws -> AppDatabase = { try AppDatabase.openShared() }
+        openDatabase: @MainActor () async throws -> AppDatabase = {
+            try await AppDatabase.openShared()
+        }
     ) async throws -> IngestionReceipt {
         let database: AppDatabase
         do {
-            database = try openDatabase()
+            database = try await openDatabase()
             try database.refreshFileProtection()
         } catch {
             throw AlertIngestionError.storeUnavailable

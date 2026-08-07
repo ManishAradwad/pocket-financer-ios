@@ -99,6 +99,44 @@ final class ModelDiagnosticsTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testLoadCurrentUsesInjectedProbeOnce() async {
+        let expectedDiagnostic = ModelDiagnostics.makeDiagnostic(
+            availability: .available,
+            localeIdentifier: "background",
+            localeWasSupported: true,
+            localeSupportProbes: [],
+            supportedLanguageIdentifiers: ["en"]
+        )
+        let calls = CallRecorder()
+
+        let diagnostic = await ModelDiagnostics.loadCurrent(
+            locale: Locale(identifier: "en_IN"),
+            using: { _ in
+                calls.record()
+                return expectedDiagnostic
+            }
+        )
+
+        XCTAssertEqual(diagnostic, expectedDiagnostic)
+        XCTAssertEqual(calls.count, 1)
+    }
+
+    private final class CallRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recordedCount = 0
+
+        var count: Int {
+            lock.withLock { recordedCount }
+        }
+
+        func record() {
+            lock.withLock {
+                recordedCount += 1
+            }
+        }
+    }
+
     private func localeSupportProbes(currentSupported: Bool) -> [ModelLocaleSupportProbe] {
         [
             ModelLocaleSupportProbe(

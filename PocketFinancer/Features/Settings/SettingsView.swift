@@ -26,7 +26,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("On-device intelligence") {
-                    ModelStatusView(diagnostic: ModelDiagnostics.current())
+                    CurrentModelStatusView()
                         .padding(.vertical, 6)
 
                     Button {

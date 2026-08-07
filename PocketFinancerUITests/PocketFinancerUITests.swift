@@ -57,6 +57,28 @@ final class PocketFinancerUITests: XCTestCase {
     }
 
     @MainActor
+    func testProtectedStoreOpeningHasVisibleStartupState() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing-hold-store-open",
+            "-AppleLanguages", "(en)",
+            "-AppleLocale", "en_US",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["store-loading-title"].waitForExistence(timeout: 3))
+        app.terminate()
+
+        app.launchArguments = [
+            "--ui-testing-reset",
+            "-AppleLanguages", "(en)",
+            "-AppleLocale", "en_US",
+        ]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Your finances stay yours"].waitForExistence(timeout: 8))
+    }
+
+    @MainActor
     private func completeOnboarding(in app: XCUIApplication) {
         XCTAssertTrue(app.staticTexts["Your finances stay yours"].waitForExistence(timeout: 8))
         let continueButton = app.buttons["onboarding-continue"]

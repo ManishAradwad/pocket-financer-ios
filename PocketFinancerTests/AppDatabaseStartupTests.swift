@@ -9,6 +9,21 @@ final class AppDatabaseStartupTests: XCTestCase {
     /// freshly opened `ModelContainer` is released while its startup notifications drain.
     @MainActor private static var retainedCompatibleStores: [(AppDatabase, URL)] = []
 
+    @MainActor
+    func testBootstrapDefersDatabaseOpenUntilItsLoadingTaskRuns() {
+        var openCount = 0
+
+        _ = StoreBootstrapView(openDatabase: {
+            openCount += 1
+            throw AppDatabaseStartupFailure(
+                kind: .storeOpenFailed,
+                diagnosticCode: "StoreInitializationError/91"
+            )
+        })
+
+        XCTAssertEqual(openCount, 0)
+    }
+
     func testObservedUnknownModelErrorUsesSafeDiagnosticWithoutUnderlyingDetails() {
         let sensitiveDescription = "Store at /private/example contained a sensitive alert body"
         let modelError = NSError(

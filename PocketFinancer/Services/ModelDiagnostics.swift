@@ -34,7 +34,19 @@ enum ModelAvailabilityDiagnosticState: Equatable, Sendable {
 }
 
 enum ModelDiagnostics {
-    static func current(locale: Locale = .current) -> ModelDiagnostic {
+    private final class CurrentLoadAttempt {
+        let task: Task<ModelDiagnostic, Never>
+
+        init(locale: Locale) {
+            task = Task.detached(priority: .utility) {
+                ModelDiagnostics.current(locale: locale)
+            }
+        }
+    }
+
+    private static var currentLoadAttempts: [String: CurrentLoadAttempt] = [:]
+
+    nonisolated static func current(locale: Locale = .current) -> ModelDiagnostic {
         let model = SystemLanguageModel.default
         let localeWasSupported = model.supportsLocale(locale)
         return makeDiagnostic(
@@ -50,7 +62,34 @@ enum ModelDiagnostics {
         )
     }
 
-    static func makeLocaleSupportProbes(
+    @MainActor
+    static func loadCurrent(locale: Locale = .current) async -> ModelDiagnostic {
+        let key = locale.identifier
+        let attempt: CurrentLoadAttempt
+        if let currentAttempt = currentLoadAttempts[key] {
+            attempt = currentAttempt
+        } else {
+            attempt = CurrentLoadAttempt(locale: locale)
+            currentLoadAttempts[key] = attempt
+        }
+
+        let diagnostic = await attempt.task.value
+        if currentLoadAttempts[key] === attempt {
+            currentLoadAttempts.removeValue(forKey: key)
+        }
+        return diagnostic
+    }
+
+    nonisolated static func loadCurrent(
+        locale: Locale,
+        using load: @escaping @Sendable (Locale) -> ModelDiagnostic
+    ) async -> ModelDiagnostic {
+        await Task.detached(priority: .utility) {
+            load(locale)
+        }.value
+    }
+
+    nonisolated static func makeLocaleSupportProbes(
         currentLocale: Locale,
         currentLocaleWasSupported: Bool,
         supportsLocale: (Locale) -> Bool
@@ -79,13 +118,13 @@ enum ModelDiagnostics {
         ]
     }
 
-    static func languageIdentifiers(
+    nonisolated static func languageIdentifiers(
         _ languages: Set<Locale.Language>
     ) -> [String] {
         Array(Set(languages.map(\.minimalIdentifier))).sorted()
     }
 
-    static func makeDiagnostic(
+    nonisolated static func makeDiagnostic(
         availability: ModelAvailabilityDiagnosticState,
         localeIdentifier: String,
         localeWasSupported: Bool,
@@ -164,7 +203,7 @@ enum ModelDiagnostics {
         }
     }
 
-    private static func availabilityState(
+    private nonisolated static func availabilityState(
         _ availability: SystemLanguageModel.Availability
     ) -> ModelAvailabilityDiagnosticState {
         switch availability {

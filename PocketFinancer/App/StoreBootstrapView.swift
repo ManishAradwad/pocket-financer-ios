@@ -2,41 +2,52 @@ import SwiftData
 import SwiftUI
 
 enum StoreBootstrapState {
+    case loading
     case ready(AppDatabase)
     case unavailable(AppDatabaseStartupFailure)
 }
 
 @MainActor
 struct StoreBootstrapView: View {
-    @State private var state: StoreBootstrapState
-    private let openDatabase: @MainActor () throws -> AppDatabase
+    @State private var state: StoreBootstrapState = .loading
+    private let openDatabase: @MainActor @Sendable () async throws -> AppDatabase
 
     init() {
         self.init(openDatabase: Self.openProductionDatabase)
     }
 
-    init(openDatabase: @escaping @MainActor () throws -> AppDatabase) {
+    init(openDatabase: @escaping @MainActor @Sendable () async throws -> AppDatabase) {
         self.openDatabase = openDatabase
-        _state = State(initialValue: Self.load(using: openDatabase))
     }
 
     var body: some View {
         switch state {
+        case .loading:
+            LocalStoreLoadingView()
+                .task {
+                    await load()
+                }
         case .ready(let database):
             AppRootView()
                 .modelContainer(database.container)
         case .unavailable(let failure):
             LocalStoreUnavailableView(failure: failure) {
-                state = Self.load(using: openDatabase)
+                state = .loading
             }
         }
     }
 
+    private func load() async {
+        let nextState = await Self.load(using: openDatabase)
+        guard !Task.isCancelled else { return }
+        state = nextState
+    }
+
     private static func load(
-        using openDatabase: @MainActor () throws -> AppDatabase
-    ) -> StoreBootstrapState {
+        using openDatabase: @MainActor @Sendable () async throws -> AppDatabase
+    ) async -> StoreBootstrapState {
         do {
-            let database = try openDatabase()
+            let database = try await openDatabase()
             prepareForUITesting(database)
             return .ready(database)
         } catch let failure as AppDatabaseStartupFailure {
@@ -48,7 +59,7 @@ struct StoreBootstrapView: View {
         }
     }
 
-    private static func openProductionDatabase() throws -> AppDatabase {
+    private static func openProductionDatabase() async throws -> AppDatabase {
         #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--ui-testing-store-unavailable") {
                 throw AppDatabaseStartupFailure(
@@ -56,8 +67,11 @@ struct StoreBootstrapView: View {
                     diagnosticCode: "NSCocoaErrorDomain/134504"
                 )
             }
+            if ProcessInfo.processInfo.arguments.contains("--ui-testing-hold-store-open") {
+                try await Task.sleep(for: .seconds(300))
+            }
         #endif
-        return try AppDatabase.openShared()
+        return try await AppDatabase.openShared()
     }
 
     private static func prepareForUITesting(_ database: AppDatabase) {
@@ -66,6 +80,35 @@ struct StoreBootstrapView: View {
             UserDefaults.standard.set(false, forKey: AppPreferenceKey.completedOnboarding)
             try? LocalDataService(context: database.container.mainContext).eraseAll()
         #endif
+    }
+}
+
+struct LocalStoreLoadingView: View {
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 42, weight: .semibold))
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+
+            VStack(spacing: 8) {
+                Text("Opening protected local data")
+                    .font(.title2.bold())
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("store-loading-title")
+
+                Text("Keep this iPhone unlocked while Pocket Financer safely opens its on-device store.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            ProgressView()
+                .controlSize(.large)
+                .accessibilityLabel("Opening local store")
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

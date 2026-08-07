@@ -8,6 +8,7 @@ struct AlertProcessingDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var fetchedTransaction: Transaction?
     @State private var extractionRuns: [ExtractionRun] = []
+    @State private var modelDiagnostic: ModelDiagnostic?
     @State private var retrying = false
     @State private var resultMessage: String?
 
@@ -60,6 +61,7 @@ struct AlertProcessingDetailView: View {
         .task {
             loadLinkedTransaction()
             loadExtractionRuns()
+            await loadModelDiagnostic()
         }
         .alert(
             "Pocket Financer",
@@ -200,23 +202,28 @@ struct AlertProcessingDetailView: View {
     }
 
     private var modelRunSection: some View {
-        let diagnostic = ModelDiagnostics.current()
-        return Section("Model run") {
+        Section("Model run") {
             LabeledContent("Parser", value: alert.parserName ?? "Not invoked")
             LabeledContent("System model", value: "SystemLanguageModel.default")
-            LabeledContent("Current app locale", value: diagnostic.localeIdentifier)
-            LabeledContent(
-                "Current locale supported",
-                value: diagnostic.localeWasSupported ? "Yes" : "No"
-            )
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Model language identifiers")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(diagnostic.supportedLanguageSummary)
-                    .font(.callout.monospaced())
-                    .textSelection(.enabled)
+
+            if let modelDiagnostic {
+                LabeledContent("Current app locale", value: modelDiagnostic.localeIdentifier)
+                LabeledContent(
+                    "Current locale supported",
+                    value: modelDiagnostic.localeWasSupported ? "Yes" : "No"
+                )
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Model language identifiers")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(modelDiagnostic.supportedLanguageSummary)
+                        .font(.callout.monospaced())
+                        .textSelection(.enabled)
+                }
+            } else {
+                ModelStatusLoadingView()
             }
+
             LabeledContent("Cancellation threshold", value: FoundationModelExtractionContract.timeoutDescription)
             LabeledContent("Guardrails", value: FoundationModelExtractionContract.guardrailsDescription)
             LabeledContent("Scheduling", value: FoundationModelExtractionContract.requestSchedulingDescription)
@@ -467,6 +474,13 @@ struct AlertProcessingDetailView: View {
             sortBy: [SortDescriptor(\ExtractionRun.attemptIndex, order: .reverse)]
         )
         extractionRuns = ((try? modelContext.fetch(descriptor)) ?? []).filter { $0.alertID == alert.id }
+    }
+
+    private func loadModelDiagnostic() async {
+        guard modelDiagnostic == nil else { return }
+        let diagnostic = await ModelDiagnostics.loadCurrent()
+        guard !Task.isCancelled else { return }
+        modelDiagnostic = diagnostic
     }
 
     private func retry() async {
