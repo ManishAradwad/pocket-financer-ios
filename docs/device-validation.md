@@ -10,7 +10,7 @@ These checks cannot be proven by a simulator or CI. Run them on the signed iPhon
 4. Add `Import Transaction Alert`. Set Message Body to `Shortcut Input`, then select its `Content` property. Leave Sender, Received At, and Source Application empty; the app uses the automation execution time.
 5. Choose Run Immediately and save the automation.
 6. Send a synthetic debit alert while the phone is unlocked, then while locked after one unlock.
-7. Open the alert's **Processing Details** and confirm its persisted attempt shows exact instructions/request, the post-schema `ParsedAlertDraft`, classification/direction/amount/merchant/account/date validation-stage outcomes, response/total timing, safe result code, disposition, and immutable accepted transaction snapshot. Confirm the current-contract preview and current ledger are labeled separately from historical runs.
+7. Open the alert's **Processing Details** and confirm it shows the exact persisted filter decision, cumulative structured-generation JSON snapshots, exact instructions/request, the post-schema `ParsedAlertDraft`, classification/direction/amount/merchant/account/date validation-stage outcomes, response/total timing, safe result code, disposition, and immutable accepted transaction snapshot. Confirm raw snapshots, mapped fields, and the current ledger are labeled separately.
 8. Confirm exactly one transaction appears, the evidence is correct, and replaying the same normalized body within 15 seconds is marked duplicate even when sender metadata differs. Confirm the same body after 15 seconds can be processed as a legitimate second transaction.
 9. Edit the transaction and confirm **Edited by owner** changes while the original run's draft and accepted snapshot remain unchanged. Retry it and confirm Pocket Financer preserves the owner correction without starting another model attempt or changing the historical run.
 10. After the proof works, create three otherwise identical automations for `Rs`, `INR`, and `₹`, then remove the `debited` automation. Multiple Message criteria are AND, so the currency markers must not be placed together in one trigger.
@@ -29,7 +29,7 @@ Do not corrupt or replace a personal iPhone store to test recovery. In an isolat
 4. No empty ledger, onboarding flow, or in-memory fallback becomes available behind the error.
 5. Remove the launch argument and relaunch to confirm a normal isolated test store can open; do not interpret this injection as a real migration test.
 
-Separately, unit/integration validation must cover a real V1-to-V2 lightweight migration, an injected `storeUnavailable` result from `AlertIngestionService.ingestLive`, and preservation of an unsupported pre-baseline store and sidecars. The App Intent must convert that failure to `localStoreUnavailable`, explicitly say the alert was not saved, and create no alert or extraction run.
+Separately, unit/integration validation must cover the V1-to-V4 lightweight migration path, preservation of V2 extraction runs and V3 generation snapshots, an injected `storeUnavailable` result from `AlertIngestionService.ingestLive`, and preservation of an unsupported pre-baseline store and sidecars. The App Intent must convert that failure to `localStoreUnavailable`, explicitly say the alert was not saved, and create no alert or extraction run.
 
 ## iOS 27 beta exploration
 

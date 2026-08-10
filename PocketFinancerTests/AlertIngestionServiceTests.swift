@@ -30,6 +30,135 @@ final class AlertIngestionServiceTests: XCTestCase {
         XCTAssertEqual(alerts.first?.rawBody, TestFixtures.validBody)
         XCTAssertEqual(alerts.first?.status, .imported)
         XCTAssertEqual(accounts.first?.name, "HDFC Bank A/c XX0000")
+        let extractionRun = try XCTUnwrap(context.fetch(FetchDescriptor<ExtractionRun>()).first)
+        let filterRun = try XCTUnwrap(context.fetch(FetchDescriptor<DeterministicFilterRun>()).first)
+        XCTAssertEqual(filterRun.alertID, alerts.first?.id)
+        XCTAssertEqual(filterRun.evaluationIndex, 1)
+        XCTAssertEqual(filterRun.rulesVersion, AlertFilter.rulesVersion)
+        XCTAssertEqual(filterRun.decision, .eligible)
+        XCTAssertNil(filterRun.rejectionCode)
+        XCTAssertFalse(filterRun.senderWasUsed)
+        XCTAssertEqual(filterRun.extractionRunID, extractionRun.id)
+        XCTAssertEqual(
+            filterRun.stages?.map(\.state),
+            Array(repeating: .passed, count: AlertFilterStageID.allCases.count)
+        )
+    }
+
+    @MainActor
+    func testStreamingParserPersistsEveryExactStructuredSnapshotBeforeLedgerWrite() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let snapshots = [
+            TransactionParserGenerationSnapshot(
+                sequenceIndex: 0,
+                capturedAt: TestFixtures.receivedAt.addingTimeInterval(0.1),
+                rawContentJSON: #"{"kind":"debit"}"#,
+                isComplete: false,
+                formatIdentifier: TransactionParserGenerationSnapshot.currentFormatIdentifier
+            ),
+            TransactionParserGenerationSnapshot(
+                sequenceIndex: 1,
+                capturedAt: TestFixtures.receivedAt.addingTimeInterval(0.2),
+                rawContentJSON: #"{"kind":"debit","amountText":"Rs.500.00"}"#,
+                isComplete: false,
+                formatIdentifier: TransactionParserGenerationSnapshot.currentFormatIdentifier
+            ),
+            TransactionParserGenerationSnapshot(
+                sequenceIndex: 2,
+                capturedAt: TestFixtures.receivedAt.addingTimeInterval(0.3),
+                rawContentJSON:
+                    #"{"kind":"debit","amountText":"Rs.500.00","merchantText":"Demo Store","accountText":"a/c XXXXXX0000","dateText":"05-08-2026","currencyCode":"INR"}"#,
+                isComplete: true,
+                formatIdentifier: TransactionParserGenerationSnapshot.currentFormatIdentifier
+            ),
+        ]
+        let service = AlertIngestionService(
+            context: context,
+            parser: StreamingTransactionParser(
+                snapshots: snapshots,
+                draft: TestFixtures.validDraft
+            )
+        )
+
+        let receipt = try await service.ingest(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+
+        XCTAssertEqual(receipt.disposition, .imported)
+        let run = try XCTUnwrap(context.fetch(FetchDescriptor<ExtractionRun>()).first)
+        let stored = try context.fetch(
+            FetchDescriptor<StructuredGenerationSnapshot>(
+                sortBy: [SortDescriptor(\StructuredGenerationSnapshot.sequenceIndex)]
+            )
+        )
+        XCTAssertEqual(stored.count, 3)
+        XCTAssertEqual(stored.map(\.extractionRunID), Array(repeating: run.id, count: 3))
+        XCTAssertEqual(stored.map(\.sequenceIndex), [0, 1, 2])
+        XCTAssertEqual(stored.map(\.rawContentJSON), snapshots.map(\.rawContentJSON))
+        XCTAssertEqual(stored.map(\.isComplete), [false, false, true])
+        XCTAssertEqual(
+            stored.map(\.formatIdentifier),
+            Array(
+                repeating: StructuredGenerationSnapshot.currentFormatIdentifier,
+                count: 3
+            )
+        )
+        XCTAssertEqual(run.parserDraft, TestFixtures.validDraft)
+        XCTAssertEqual(run.validationOutcome, .passed)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Transaction>()).count, 1)
+    }
+
+    @MainActor
+    func testSnapshotPersistenceFailureStopsBeforeValidationAndLedgerWrite() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let snapshot = TransactionParserGenerationSnapshot(
+            sequenceIndex: 0,
+            capturedAt: TestFixtures.receivedAt.addingTimeInterval(0.1),
+            rawContentJSON: #"{"kind":"debit"}"#,
+            isComplete: false,
+            formatIdentifier: TransactionParserGenerationSnapshot.currentFormatIdentifier
+        )
+        var saveAttempt = 0
+        let service = AlertIngestionService(
+            context: context,
+            parser: StreamingTransactionParser(
+                snapshots: [snapshot],
+                draft: TestFixtures.validDraft
+            ),
+            contextSaver: { context in
+                saveAttempt += 1
+                if saveAttempt == 4 {
+                    throw AlertIngestionError.persistenceFailed
+                }
+                try context.save()
+            }
+        )
+
+        let receipt = try await service.ingest(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+
+        XCTAssertEqual(receipt.disposition, .processingIncomplete)
+        let alert = try XCTUnwrap(context.fetch(FetchDescriptor<InboxAlert>()).first)
+        XCTAssertEqual(alert.status, .processing)
+        XCTAssertEqual(alert.rawBody, TestFixtures.validBody)
+        let run = try XCTUnwrap(context.fetch(FetchDescriptor<ExtractionRun>()).first)
+        XCTAssertNil(run.parserDraft)
+        XCTAssertNil(run.validationOutcome)
+        XCTAssertNil(run.completedAt)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<StructuredGenerationSnapshot>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
     }
 
     @MainActor
@@ -62,8 +191,8 @@ final class AlertIngestionServiceTests: XCTestCase {
         XCTAssertEqual(run.contractVersion, FoundationModelExtractionContract.contractVersion)
         XCTAssertEqual(run.profileVersion, FoundationModelExtractionContract.extractionProfileVersion)
         XCTAssertEqual(run.localeIdentifier, parser.requestMetadata.localeIdentifier)
-        XCTAssertEqual(run.contractVersion, "foundation-transaction-extraction.v2")
-        XCTAssertEqual(run.profileVersion, "2")
+        XCTAssertEqual(run.contractVersion, "foundation-transaction-extraction.v3")
+        XCTAssertEqual(run.profileVersion, "3")
         XCTAssertEqual(run.localeIdentifier, "en-US")
         XCTAssertEqual(run.exactInstructions, FoundationModelExtractionContract.instructions)
         XCTAssertEqual(
@@ -127,6 +256,12 @@ final class AlertIngestionServiceTests: XCTestCase {
         XCTAssertEqual(alert.contentDigest, alert.sourceIdentity)
         XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
+        let filterRun = try XCTUnwrap(context.fetch(FetchDescriptor<DeterministicFilterRun>()).first)
+        XCTAssertEqual(filterRun.decision, .rejectAndErase)
+        XCTAssertEqual(filterRun.rejectionCode, .oneTimePassword)
+        XCTAssertNil(filterRun.extractionRunID)
+        XCTAssertEqual(filterRun.stages?.first?.state, .passed)
+        XCTAssertEqual(filterRun.stages?.dropFirst().first?.state, .failed)
     }
 
     @MainActor
@@ -159,6 +294,10 @@ final class AlertIngestionServiceTests: XCTestCase {
             XCTAssertNil(alert.rejectionCode)
             XCTAssertEqual(try context.fetch(FetchDescriptor<Transaction>()).count, 1)
             XCTAssertEqual(try context.fetch(FetchDescriptor<ExtractionRun>()).count, 1)
+            let filterRun = try XCTUnwrap(
+                context.fetch(FetchDescriptor<DeterministicFilterRun>()).first
+            )
+            XCTAssertEqual(filterRun.decision, .eligible, body)
         }
     }
 
@@ -556,9 +695,9 @@ final class AlertIngestionServiceTests: XCTestCase {
         let receipt = try await retry.retry(alertID: alert.id)
 
         XCTAssertEqual(receipt.disposition, .needsReview)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
         XCTAssertNil(alert.transactionID)
         XCTAssertEqual(alert.status, .needsReview)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
         let runs = try context.fetch(
             FetchDescriptor<ExtractionRun>(sortBy: [SortDescriptor(\ExtractionRun.attemptIndex)])
         )
@@ -674,63 +813,6 @@ final class AlertIngestionServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testEraseAllInvalidatesInFlightGenerationBeforeItCanWriteAgain() async throws {
-        let database = try AppDatabase(inMemory: true)
-        let context = database.container.mainContext
-        let parser = InspectingTransactionParser {
-            try LocalDataService(context: context).eraseAll()
-        }
-        let service = AlertIngestionService(context: context, parser: parser)
-
-        let receipt = try await service.ingest(
-            body: TestFixtures.validBody,
-            sender: "AX-HDFCBK",
-            receivedAt: TestFixtures.receivedAt,
-            sourceApplication: "Messages",
-            origin: .manual
-        )
-
-        XCTAssertEqual(receipt.disposition, .processingIncomplete)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<InboxAlert>()).isEmpty)
-    }
-
-    @MainActor
-    func testEraseAllStopsPendingBatchFromProcessingStaleRemainingAlerts() async throws {
-        let database = try AppDatabase(inMemory: true)
-        let context = database.container.mainContext
-        let parser = InspectingFirstResponseTransactionParser {
-            try LocalDataService(context: context).eraseAll()
-        }
-        let service = AlertIngestionService(context: context, parser: parser)
-        _ = try service.enqueue(
-            body: TestFixtures.validBody,
-            sender: "AX-HDFCBK",
-            receivedAt: TestFixtures.receivedAt,
-            sourceApplication: "Messages",
-            origin: .shortcut
-        )
-        _ = try service.enqueue(
-            body: TestFixtures.validBody + " Reference B.",
-            sender: "AX-HDFCBK",
-            receivedAt: TestFixtures.receivedAt,
-            sourceApplication: "Messages",
-            origin: .shortcut
-        )
-
-        let processed = await service.processPending()
-
-        XCTAssertEqual(processed, 1)
-        XCTAssertEqual(parser.invocationCount, 1)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<InboxAlert>()).isEmpty)
-    }
-
-    @MainActor
     func testEraseAllRemovesLedgerQueueAccountsAndEvidence() async throws {
         let database = try AppDatabase(inMemory: true)
         let context = database.container.mainContext
@@ -745,8 +827,112 @@ final class AlertIngestionServiceTests: XCTestCase {
             sourceApplication: "Messages",
             origin: .manual
         )
+        let extractionRun = try XCTUnwrap(context.fetch(FetchDescriptor<ExtractionRun>()).first)
+        context.insert(
+            StructuredGenerationSnapshot(
+                extractionRunID: extractionRun.id,
+                sequenceIndex: 0,
+                capturedAt: TestFixtures.receivedAt,
+                rawContentJSON: #"{"kind":"debit"}"#,
+                isComplete: false
+            )
+        )
+        try context.save()
 
         try LocalDataService(context: context).eraseAll()
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DeterministicFilterRun>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<StructuredGenerationSnapshot>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<InboxAlert>()).isEmpty)
+    }
+
+    @MainActor
+    func testEraseAllInvalidatesInFlightGenerationBeforeItCanWriteAgain() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let snapshots = [
+            TransactionParserGenerationSnapshot(
+                sequenceIndex: 0,
+                capturedAt: TestFixtures.receivedAt.addingTimeInterval(0.1),
+                rawContentJSON: #"{"kind":"debit"}"#,
+                isComplete: false,
+                formatIdentifier: TransactionParserGenerationSnapshot.currentFormatIdentifier
+            ),
+            TransactionParserGenerationSnapshot(
+                sequenceIndex: 1,
+                capturedAt: TestFixtures.receivedAt.addingTimeInterval(0.2),
+                rawContentJSON: #"{"kind":"debit","amountText":"Rs.500.00"}"#,
+                isComplete: false,
+                formatIdentifier: TransactionParserGenerationSnapshot.currentFormatIdentifier
+            ),
+        ]
+        let parser = ErasingStreamingTransactionParser(
+            snapshots: snapshots,
+            draft: TestFixtures.validDraft,
+            eraseDuringGeneration: {
+                try LocalDataService(context: context).eraseAll()
+            }
+        )
+        let service = AlertIngestionService(context: context, parser: parser)
+
+        let receipt = try await service.ingest(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .manual
+        )
+
+        XCTAssertEqual(receipt.disposition, .processingIncomplete)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DeterministicFilterRun>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<StructuredGenerationSnapshot>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<InboxAlert>()).isEmpty)
+    }
+
+    @MainActor
+    func testEraseAllStopsPrefetchedPendingLoopFromRestartingAfterGeneration() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let snapshot = TransactionParserGenerationSnapshot(
+            sequenceIndex: 0,
+            capturedAt: TestFixtures.receivedAt.addingTimeInterval(0.1),
+            rawContentJSON: #"{"kind":"debit"}"#,
+            isComplete: false,
+            formatIdentifier: TransactionParserGenerationSnapshot.currentFormatIdentifier
+        )
+        let parser = ErasingStreamingTransactionParser(
+            snapshots: [snapshot],
+            draft: TestFixtures.validDraft,
+            eraseDuringGeneration: {
+                try LocalDataService(context: context).eraseAll()
+            }
+        )
+        let service = AlertIngestionService(context: context, parser: parser)
+        _ = try service.enqueue(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        _ = try service.enqueue(
+            body: "HDFC Bank: Rs.700.00 debited from a/c XXXXXX0000 on 05-08-2026 at Demo Store.",
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt.addingTimeInterval(20),
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+
+        let processed = await service.processPending()
+
+        XCTAssertEqual(processed, 1)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DeterministicFilterRun>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<StructuredGenerationSnapshot>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)

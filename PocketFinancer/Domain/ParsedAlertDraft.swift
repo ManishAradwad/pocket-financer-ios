@@ -28,6 +28,36 @@ struct TransactionParserRequestMetadata: Equatable, Sendable {
     let supportedLanguageIdentifiers: [String]
 }
 
+/// One cumulative structured-generation snapshot produced while a parser request runs.
+///
+/// `rawContentJSON` is the exact `GeneratedContent.jsonString` supplied by the parser,
+/// before Pocket Financer maps or validates any extracted field. It can contain sensitive
+/// financial evidence and must remain in the protected local store.
+struct TransactionParserGenerationSnapshot: Equatable, Sendable {
+    static let currentFormatIdentifier =
+        "foundationmodels.generated-content-json.v1"
+
+    let sequenceIndex: Int
+    let capturedAt: Date
+    let rawContentJSON: String
+    let isComplete: Bool
+    let formatIdentifier: String
+}
+
+/// Owner-visible milestones emitted by a parser without changing its final result contract.
+///
+/// Foundation Models streams cumulative snapshots rather than token deltas. Other parser
+/// implementations may use the default progress-aware overload and emit no milestones.
+enum TransactionParserProgress: Equatable, Sendable {
+    case requestQueued(at: Date)
+    case generationStarted(at: Date)
+    case generationSnapshot(TransactionParserGenerationSnapshot)
+    case generationCompleted(at: Date)
+}
+
+typealias TransactionParserProgressHandler =
+    @Sendable (TransactionParserProgress) async throws -> Void
+
 protocol TransactionParsing: Sendable {
     var parserName: String { get }
     var requestMetadata: TransactionParserRequestMetadata { get }
@@ -36,6 +66,13 @@ protocol TransactionParsing: Sendable {
         body: String,
         sender: String,
         receivedAt: Date
+    ) async throws -> ParsedAlertDraft
+
+    func parse(
+        body: String,
+        sender: String,
+        receivedAt: Date,
+        progress: @escaping TransactionParserProgressHandler
     ) async throws -> ParsedAlertDraft
 }
 
@@ -46,6 +83,16 @@ extension TransactionParsing {
             localeWasSupported: nil,
             supportedLanguageIdentifiers: []
         )
+    }
+
+    /// Compatibility path for parsers that only produce a final draft.
+    func parse(
+        body: String,
+        sender: String,
+        receivedAt: Date,
+        progress _: @escaping TransactionParserProgressHandler
+    ) async throws -> ParsedAlertDraft {
+        try await parse(body: body, sender: sender, receivedAt: receivedAt)
     }
 }
 

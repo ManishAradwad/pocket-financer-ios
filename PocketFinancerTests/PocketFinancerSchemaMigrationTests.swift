@@ -58,6 +58,154 @@ final class PocketFinancerSchemaMigrationTests: XCTestCase {
             XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
             XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
             XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
+            XCTAssertTrue(try context.fetch(FetchDescriptor<StructuredGenerationSnapshot>()).isEmpty)
+            XCTAssertTrue(try context.fetch(FetchDescriptor<DeterministicFilterRun>()).isEmpty)
+        }
+    }
+
+    @MainActor
+    func testLightweightMigrationFromV2PreservesExtractionRunsAndAddsStructuredSnapshots() throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: "PocketFinancerMigration-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        let storeURL = directoryURL.appending(path: "PocketFinancer.store")
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+        var alertID: UUID?
+        var extractionRunID: UUID?
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: PocketFinancerSchemaV2.self)
+            let configuration = ModelConfiguration(
+                "PocketFinancerV2MigrationTest",
+                schema: schema,
+                url: storeURL,
+                allowsSave: true,
+                cloudKitDatabase: .none
+            )
+            let container = try ModelContainer(for: schema, configurations: configuration)
+            let context = container.mainContext
+            let alert = InboxAlert(
+                sourceIdentity: "migration-v2-source",
+                contentDigest: "migration-v2-digest",
+                origin: .manual,
+                sourceApplication: "Messages",
+                sender: "legacy-v2-sender",
+                rawBody: TestFixtures.validBody,
+                receivedAt: TestFixtures.receivedAt
+            )
+            let extractionRun = ExtractionRun(
+                alertID: alert.id,
+                attemptIndex: 1,
+                startedAt: TestFixtures.receivedAt,
+                parserName: "Legacy V2 Parser",
+                contractVersion: "legacy-contract.v2",
+                profileVersion: "2",
+                localeIdentifier: "en-US",
+                localeWasSupported: true,
+                supportedLanguageIdentifiers: ["en"],
+                exactInstructions: "Legacy instructions",
+                exactRequest: "Legacy request"
+            )
+            alertID = alert.id
+            extractionRunID = extractionRun.id
+            context.insert(alert)
+            context.insert(extractionRun)
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let migratedDatabase = try AppDatabase(storeURL: storeURL)
+            Self.retainedMigratedStores.append((migratedDatabase, directoryURL))
+            let context = migratedDatabase.container.mainContext
+            let alerts = try context.fetch(FetchDescriptor<InboxAlert>())
+            let extractionRuns = try context.fetch(FetchDescriptor<ExtractionRun>())
+
+            XCTAssertEqual(alerts.count, 1)
+            XCTAssertEqual(alerts.first?.id, alertID)
+            XCTAssertEqual(extractionRuns.count, 1)
+            XCTAssertEqual(extractionRuns.first?.id, extractionRunID)
+            XCTAssertEqual(extractionRuns.first?.parserName, "Legacy V2 Parser")
+            XCTAssertEqual(extractionRuns.first?.exactRequest, "Legacy request")
+            XCTAssertTrue(try context.fetch(FetchDescriptor<StructuredGenerationSnapshot>()).isEmpty)
+            XCTAssertTrue(try context.fetch(FetchDescriptor<DeterministicFilterRun>()).isEmpty)
+        }
+    }
+
+    @MainActor
+    func testLightweightMigrationFromV3PreservesStructuredSnapshotsAndAddsFilterRuns() throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: "PocketFinancerMigration-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        let storeURL = directoryURL.appending(path: "PocketFinancer.store")
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+        var alertID: UUID?
+        var extractionRunID: UUID?
+        var snapshotID: UUID?
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: PocketFinancerSchemaV3.self)
+            let configuration = ModelConfiguration(
+                "PocketFinancerV3MigrationTest",
+                schema: schema,
+                url: storeURL,
+                allowsSave: true,
+                cloudKitDatabase: .none
+            )
+            let container = try ModelContainer(for: schema, configurations: configuration)
+            let context = container.mainContext
+            let alert = InboxAlert(
+                sourceIdentity: "migration-v3-source",
+                contentDigest: "migration-v3-digest",
+                origin: .manual,
+                sourceApplication: "Messages",
+                sender: "legacy-v3-sender",
+                rawBody: TestFixtures.validBody,
+                receivedAt: TestFixtures.receivedAt
+            )
+            let extractionRun = ExtractionRun(
+                alertID: alert.id,
+                attemptIndex: 1,
+                startedAt: TestFixtures.receivedAt,
+                parserName: "Legacy V3 Parser",
+                contractVersion: "legacy-contract.v3",
+                profileVersion: "3",
+                localeIdentifier: "en-US",
+                localeWasSupported: true,
+                supportedLanguageIdentifiers: ["en"],
+                exactInstructions: "Legacy instructions",
+                exactRequest: "Legacy request"
+            )
+            let snapshot = StructuredGenerationSnapshot(
+                extractionRunID: extractionRun.id,
+                sequenceIndex: 0,
+                capturedAt: TestFixtures.receivedAt,
+                rawContentJSON: #"{"amount":"125.00"}"#,
+                isComplete: true
+            )
+            alertID = alert.id
+            extractionRunID = extractionRun.id
+            snapshotID = snapshot.id
+            context.insert(alert)
+            context.insert(extractionRun)
+            context.insert(snapshot)
+            try context.save()
+        }
+
+        try autoreleasepool {
+            let migratedDatabase = try AppDatabase(storeURL: storeURL)
+            Self.retainedMigratedStores.append((migratedDatabase, directoryURL))
+            let context = migratedDatabase.container.mainContext
+            let alerts = try context.fetch(FetchDescriptor<InboxAlert>())
+            let extractionRuns = try context.fetch(FetchDescriptor<ExtractionRun>())
+            let snapshots = try context.fetch(FetchDescriptor<StructuredGenerationSnapshot>())
+
+            XCTAssertEqual(alerts.first?.id, alertID)
+            XCTAssertEqual(extractionRuns.first?.id, extractionRunID)
+            XCTAssertEqual(snapshots.first?.id, snapshotID)
+            XCTAssertEqual(snapshots.first?.rawContentJSON, #"{"amount":"125.00"}"#)
+            XCTAssertTrue(try context.fetch(FetchDescriptor<DeterministicFilterRun>()).isEmpty)
         }
     }
 }

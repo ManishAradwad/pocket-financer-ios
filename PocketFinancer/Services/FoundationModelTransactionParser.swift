@@ -36,6 +36,10 @@ private struct GeneratedTransactionAlert {
 }
 
 struct FoundationModelTransactionParser: TransactionParsing {
+    private struct ProgressReportingError: Error {
+        let underlyingError: any Error
+    }
+
     let parserName = FoundationModelExtractionContract.parserName
     let requestMetadata: TransactionParserRequestMetadata
 
@@ -57,7 +61,21 @@ struct FoundationModelTransactionParser: TransactionParsing {
         )
     }
 
-    func parse(body: String, sender _: String, receivedAt: Date) async throws -> ParsedAlertDraft {
+    func parse(body: String, sender: String, receivedAt: Date) async throws -> ParsedAlertDraft {
+        try await parse(
+            body: body,
+            sender: sender,
+            receivedAt: receivedAt,
+            progress: { _ in }
+        )
+    }
+
+    func parse(
+        body: String,
+        sender _: String,
+        receivedAt: Date,
+        progress: @escaping TransactionParserProgressHandler
+    ) async throws -> ParsedAlertDraft {
         switch model.availability {
         case .available:
             break
@@ -79,19 +97,81 @@ struct FoundationModelTransactionParser: TransactionParsing {
         )
 
         do {
+            try await Self.report(.requestQueued(at: .now), to: progress)
             let generated = try await FoundationModelExecutionGate.shared.withPermit {
-                try await session.respond(
+                try await Self.report(.generationStarted(at: .now), to: progress)
+
+                let stream = session.streamResponse(
                     to: prompt,
-                    generating: GeneratedTransactionAlert.self
-                ).content
+                    generating: GeneratedTransactionAlert.self,
+                    options: GenerationOptions(sampling: .greedy)
+                )
+                var sequenceIndex = 0
+                var lastRawContentJSON: String?
+                var lastWasComplete: Bool?
+
+                for try await snapshot in stream {
+                    let rawContentJSON = snapshot.rawContent.jsonString
+                    let isComplete = snapshot.rawContent.isComplete
+                    try await Self.report(
+                        .generationSnapshot(
+                            TransactionParserGenerationSnapshot(
+                                sequenceIndex: sequenceIndex,
+                                capturedAt: .now,
+                                rawContentJSON: rawContentJSON,
+                                isComplete: isComplete,
+                                formatIdentifier: TransactionParserGenerationSnapshot
+                                    .currentFormatIdentifier
+                            )
+                        ),
+                        to: progress
+                    )
+                    sequenceIndex += 1
+                    lastRawContentJSON = rawContentJSON
+                    lastWasComplete = isComplete
+                }
+
+                let response = try await stream.collect()
+                let finalRawContentJSON = response.rawContent.jsonString
+                let finalIsComplete = response.rawContent.isComplete
+                if lastRawContentJSON != finalRawContentJSON || lastWasComplete != finalIsComplete {
+                    try await Self.report(
+                        .generationSnapshot(
+                            TransactionParserGenerationSnapshot(
+                                sequenceIndex: sequenceIndex,
+                                capturedAt: .now,
+                                rawContentJSON: finalRawContentJSON,
+                                isComplete: finalIsComplete,
+                                formatIdentifier: TransactionParserGenerationSnapshot
+                                    .currentFormatIdentifier
+                            )
+                        ),
+                        to: progress
+                    )
+                }
+                try await Self.report(.generationCompleted(at: .now), to: progress)
+                return response.content
             }
             return Self.map(generated)
+        } catch let error as ProgressReportingError {
+            throw error.underlyingError
         } catch is CancellationError {
             throw TransactionParserError.cancelled
         } catch let error as LanguageModelSession.GenerationError {
             throw Self.mapGenerationError(error)
         } catch {
             throw TransactionParserError.generationFailed
+        }
+    }
+
+    private static func report(
+        _ update: TransactionParserProgress,
+        to progress: TransactionParserProgressHandler
+    ) async throws {
+        do {
+            try await progress(update)
+        } catch {
+            throw ProgressReportingError(underlyingError: error)
         }
     }
 

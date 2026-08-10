@@ -78,21 +78,61 @@ struct InspectingTransactionParser: TransactionParsing {
 }
 
 @MainActor
-final class InspectingFirstResponseTransactionParser: TransactionParsing {
-    let parserName = "Inspecting First Response Test Parser"
+struct StreamingTransactionParser: TransactionParsing {
+    let parserName = "Streaming Test Parser"
     let requestMetadata = TestFixtures.parserRequestMetadata
-    let inspectFirstResponse: @MainActor @Sendable () throws -> Void
-    private(set) var invocationCount = 0
-
-    init(inspectFirstResponse: @escaping @MainActor @Sendable () throws -> Void) {
-        self.inspectFirstResponse = inspectFirstResponse
-    }
+    let snapshots: [TransactionParserGenerationSnapshot]
+    let draft: ParsedAlertDraft
 
     func parse(body: String, sender: String, receivedAt: Date) async throws -> ParsedAlertDraft {
-        invocationCount += 1
-        if invocationCount == 1 {
-            try inspectFirstResponse()
+        draft
+    }
+
+    func parse(
+        body: String,
+        sender: String,
+        receivedAt: Date,
+        progress: @escaping TransactionParserProgressHandler
+    ) async throws -> ParsedAlertDraft {
+        try await progress(.requestQueued(at: receivedAt))
+        try await progress(.generationStarted(at: receivedAt))
+        for snapshot in snapshots {
+            try await progress(.generationSnapshot(snapshot))
         }
-        return TestFixtures.validDraft
+        try await progress(.generationCompleted(at: snapshots.last?.capturedAt ?? receivedAt))
+        return draft
+    }
+}
+
+@MainActor
+struct ErasingStreamingTransactionParser: TransactionParsing {
+    let parserName = "Erasing Streaming Test Parser"
+    let requestMetadata = TestFixtures.parserRequestMetadata
+    let snapshots: [TransactionParserGenerationSnapshot]
+    let draft: ParsedAlertDraft
+    let eraseDuringGeneration: @MainActor @Sendable () throws -> Void
+
+    func parse(body: String, sender: String, receivedAt: Date) async throws -> ParsedAlertDraft {
+        try eraseDuringGeneration()
+        return draft
+    }
+
+    func parse(
+        body: String,
+        sender: String,
+        receivedAt: Date,
+        progress: @escaping TransactionParserProgressHandler
+    ) async throws -> ParsedAlertDraft {
+        try await progress(.requestQueued(at: receivedAt))
+        try await progress(.generationStarted(at: receivedAt))
+        if let first = snapshots.first {
+            try await progress(.generationSnapshot(first))
+        }
+        try eraseDuringGeneration()
+        for snapshot in snapshots.dropFirst() {
+            try await progress(.generationSnapshot(snapshot))
+        }
+        try await progress(.generationCompleted(at: snapshots.last?.capturedAt ?? receivedAt))
+        return draft
     }
 }
