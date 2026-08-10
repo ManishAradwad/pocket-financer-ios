@@ -141,7 +141,7 @@ struct ModelSelfTestReportView: View {
             Text("ParsedAlertDraft")
         } footer: {
             Text(
-                "ParsedAlertDraft is Pocket Financer's post-schema parser output. This adapter does not retain Response.rawContent or the session transcript, and Apple's API does not expose hidden reasoning."
+                "ParsedAlertDraft is Pocket Financer's post-schema parser output. This in-memory synthetic report does not retain stream snapshots or the session transcript. Live alert processing separately persists cumulative raw structured JSON, but Apple's API does not expose hidden reasoning."
             )
         }
     }

@@ -94,9 +94,9 @@ enum ModelSelfTestService {
             explanation: "Not exposed; elapsed wall-clock time is the only performance measurement shown."
         ),
         ModelSelfTestAPILimitation(
-            metric: "Numeric context-window size",
+            metric: "Runtime context-window query",
             explanation:
-                "Not exposed by the public iOS 26 interface. It can report that a request exceeded the window without revealing its numeric capacity."
+                "No runtime capacity property is exposed. Apple's iOS 26 documentation states a 4,096-token session limit."
         ),
         ModelSelfTestAPILimitation(
             metric: "KV-cache details",

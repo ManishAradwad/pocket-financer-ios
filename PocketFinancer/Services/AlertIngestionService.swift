@@ -62,7 +62,7 @@ final class AlertIngestionService {
     /// durable alert. The epoch invalidates both active claims and queue batches captured
     /// before an owner erase. These values intentionally reset after process restart so a
     /// persisted `.processing` alert can be recovered.
-    private struct ProcessingClaim: Equatable {
+    private struct ProcessingClaim: Equatable, Sendable {
         let token: UUID
         let epoch: UInt64
     }
@@ -240,16 +240,17 @@ final class AlertIngestionService {
         let descriptor = FetchDescriptor<InboxAlert>(sortBy: [SortDescriptor(\InboxAlert.createdAt)])
         guard let alerts = try? context.fetch(descriptor) else { return 0 }
 
-        let eligible = alerts.filter { alert in
+        let eligibleAlertIDs = alerts.filter { alert in
             let retryable =
                 alert.status == .pending || alert.status == .processing
                 || (includeNeedsReview && alert.status == .needsReview)
             return retryable && !alert.rawBody.isEmpty
-        }.prefix(limit)
+        }.prefix(limit).map(\.id)
 
         var completed = 0
-        for alert in eligible {
+        for alertID in eligibleAlertIDs {
             guard !Task.isCancelled, Self.processingEpoch == batchEpoch else { break }
+            guard let alert = try? findAlert(id: alertID) else { continue }
             do {
                 if try await classifyAndProcessIfClaimed(
                     alert,
@@ -261,11 +262,11 @@ final class AlertIngestionService {
             } catch {
                 guard
                     Self.processingEpoch == batchEpoch,
-                    let currentAlert = try? findAlert(id: alert.id)
+                    let durableAlert = try? findAlert(id: alertID)
                 else { break }
-                currentAlert.status = .pending
-                currentAlert.lastErrorCode = "persistence_failed"
-                currentAlert.updatedAt = .now
+                durableAlert.status = .pending
+                durableAlert.lastErrorCode = "persistence_failed"
+                durableAlert.updatedAt = .now
                 try? save()
             }
         }
@@ -298,10 +299,16 @@ final class AlertIngestionService {
             return IngestionReceipt(alertID: currentAlert.id, disposition: .needsReview)
         }
 
-        let filterResult = filter.evaluate(sender: currentAlert.sender, body: currentAlert.rawBody)
+        let filterTrace = filter.trace(sender: currentAlert.sender, body: currentAlert.rawBody)
+        let filterResult = filterTrace.result
+        let filterRun = try makeFilterRun(trace: filterTrace, alertID: currentAlert.id)
+        context.insert(filterRun)
+
         switch filterResult.decision {
         case .eligible:
-            return try await process(currentAlert, claim: claim)
+            // Commit the exact deterministic decision before model work starts.
+            try save()
+            return try await process(currentAlert, claim: claim, filterRun: filterRun)
         case .rejectAndErase:
             reject(
                 currentAlert,
@@ -320,7 +327,11 @@ final class AlertIngestionService {
         }
     }
 
-    private func process(_ alert: InboxAlert, claim: ProcessingClaim) async throws -> IngestionReceipt {
+    private func process(
+        _ alert: InboxAlert,
+        claim: ProcessingClaim,
+        filterRun: DeterministicFilterRun
+    ) async throws -> IngestionReceipt {
         let alertID = alert.id
         let transactionAtStart = try findTransaction(for: alert)
         if let transactionAtStart, transactionAtStart.isEdited {
@@ -357,6 +368,7 @@ final class AlertIngestionService {
                 receivedAt: alert.receivedAt
             )
         )
+        filterRun.extractionRunID = extractionRun.id
         context.insert(extractionRun)
         try save()
 
@@ -365,7 +377,10 @@ final class AlertIngestionService {
             draft = try await parseWithDeadline(
                 body: alert.rawBody,
                 sender: alert.sender,
-                receivedAt: alert.receivedAt
+                receivedAt: alert.receivedAt,
+                extractionRunID: extractionRun.id,
+                alertID: alertID,
+                claim: claim
             )
         } catch let error as TransactionParserError {
             guard Self.ownsClaim(for: alertID, claim: claim) else {
@@ -394,6 +409,22 @@ final class AlertIngestionService {
                 alertID: alert.id,
                 disposition: error.isRetryable ? .queued : .needsReview
             )
+        } catch let error as AlertIngestionError {
+            guard Self.ownsClaim(for: alertID, claim: claim) else {
+                return IngestionReceipt(alertID: alertID, disposition: .processingIncomplete)
+            }
+            if let preserved = try preserveOwnerChangeIfNeeded(
+                alert: alert,
+                transactionIDAtStart: transactionIDAtStart,
+                transactionUpdatedAtAtStart: transactionUpdatedAtAtStart,
+                extractionRun: extractionRun
+            ) {
+                return preserved
+            }
+            // The attempt and source evidence were committed before generation. If an
+            // observable model snapshot cannot be committed, stop before validation or
+            // ledger mutation and leave the durable processing record recoverable.
+            throw error
         } catch {
             guard Self.ownsClaim(for: alertID, claim: claim) else {
                 return IngestionReceipt(alertID: alertID, disposition: .processingIncomplete)
@@ -521,11 +552,25 @@ final class AlertIngestionService {
     private func parseWithDeadline(
         body: String,
         sender: String,
-        receivedAt: Date
+        receivedAt: Date,
+        extractionRunID: UUID,
+        alertID: UUID,
+        claim: ProcessingClaim
     ) async throws -> ParsedAlertDraft {
         try await withThrowingTaskGroup(of: ParsedAlertDraft.self) { group in
             group.addTask { [self] in
-                try await self.parser.parse(body: body, sender: sender, receivedAt: receivedAt)
+                try await self.parser.parse(
+                    body: body,
+                    sender: sender,
+                    receivedAt: receivedAt
+                ) { progress in
+                    try await self.persist(
+                        parserProgress: progress,
+                        extractionRunID: extractionRunID,
+                        alertID: alertID,
+                        claim: claim
+                    )
+                }
             }
             group.addTask { [self] in
                 try await Task.sleep(for: self.parserTimeout)
@@ -540,6 +585,43 @@ final class AlertIngestionService {
         }
     }
 
+    private func persist(
+        parserProgress: TransactionParserProgress,
+        extractionRunID: UUID,
+        alertID: UUID,
+        claim: ProcessingClaim
+    ) throws {
+        guard Self.ownsClaim(for: alertID, claim: claim) else { return }
+        guard case .generationSnapshot(let snapshot) = parserProgress else { return }
+
+        let descriptor = FetchDescriptor<StructuredGenerationSnapshot>()
+        if let existing = try context.fetch(descriptor).first(where: {
+            $0.extractionRunID == extractionRunID
+                && $0.sequenceIndex == snapshot.sequenceIndex
+        }) {
+            guard
+                existing.rawContentJSON == snapshot.rawContentJSON,
+                existing.isComplete == snapshot.isComplete,
+                existing.formatIdentifier == snapshot.formatIdentifier
+            else {
+                throw AlertIngestionError.persistenceFailed
+            }
+            return
+        }
+
+        context.insert(
+            StructuredGenerationSnapshot(
+                extractionRunID: extractionRunID,
+                sequenceIndex: snapshot.sequenceIndex,
+                capturedAt: snapshot.capturedAt,
+                rawContentJSON: snapshot.rawContentJSON,
+                isComplete: snapshot.isComplete,
+                formatIdentifier: snapshot.formatIdentifier
+            )
+        )
+        try save()
+    }
+
     private func findDuplicate(contentDigest: String, receivedAt: Date) throws -> InboxAlert? {
         let descriptor = FetchDescriptor<InboxAlert>(sortBy: [SortDescriptor(\InboxAlert.receivedAt, order: .reverse)])
         return try context.fetch(descriptor).first { candidate in
@@ -547,6 +629,47 @@ final class AlertIngestionService {
                 && candidate.status != .duplicate
                 && abs(candidate.receivedAt.timeIntervalSince(receivedAt)) <= Self.duplicateWindow
         }
+    }
+
+    private func makeFilterRun(
+        trace: AlertFilterTrace,
+        alertID: UUID
+    ) throws -> DeterministicFilterRun {
+        let priorRuns = try context.fetch(FetchDescriptor<DeterministicFilterRun>())
+        let persistedStages = trace.stages.map(PersistedAlertFilterStage.init)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let stageData: Data
+        do {
+            stageData = try encoder.encode(persistedStages)
+        } catch {
+            throw AlertIngestionError.persistenceFailed
+        }
+        guard let stagesJSON = String(data: stageData, encoding: .utf8) else {
+            throw AlertIngestionError.persistenceFailed
+        }
+
+        let decisionRawValue: String
+        switch trace.result.decision {
+        case .eligible:
+            decisionRawValue = "eligible"
+        case .needsReview:
+            decisionRawValue = "needs_review"
+        case .rejectAndErase:
+            decisionRawValue = "reject_and_erase"
+        }
+
+        return DeterministicFilterRun(
+            alertID: alertID,
+            evaluationIndex: priorRuns.count { $0.alertID == alertID } + 1,
+            evaluatedAt: .now,
+            rulesVersion: AlertFilter.rulesVersion,
+            decisionRawValue: decisionRawValue,
+            rejectionCodeRawValue: trace.result.rejectionCode?.rawValue,
+            completedStages: trace.result.completedStages,
+            senderWasUsed: trace.senderWasUsed,
+            stagesJSON: stagesJSON
+        )
     }
 
     private func findAlert(id: UUID) throws -> InboxAlert? {

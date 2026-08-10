@@ -25,12 +25,18 @@ struct LocalDataService {
     }
 
     func eraseAll() throws {
-        // Prevent suspended parser work from writing ledger rows after the owner has
-        // completed an erase. Existing model work may finish in memory, but it no
-        // longer owns permission to mutate the protected store.
+        // Prevent suspended parser work from writing snapshots or ledger rows after the
+        // owner has completed an erase. Existing model work may finish in memory, but it
+        // no longer owns permission to mutate the protected store.
         AlertIngestionService.invalidateAllProcessingClaims()
 
         do {
+            for filterRun in try context.fetch(FetchDescriptor<DeterministicFilterRun>()) {
+                context.delete(filterRun)
+            }
+            for snapshot in try context.fetch(FetchDescriptor<StructuredGenerationSnapshot>()) {
+                context.delete(snapshot)
+            }
             for run in try context.fetch(FetchDescriptor<ExtractionRun>()) {
                 context.delete(run)
             }

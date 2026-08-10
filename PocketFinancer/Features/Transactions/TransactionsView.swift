@@ -7,22 +7,48 @@ struct TransactionsView: View {
     @State private var searchText = ""
     @State private var showingManualImport = false
 
-    private var filteredTransactions: [Transaction] {
-        guard !searchText.isEmpty else { return transactions }
-        return transactions.filter {
-            $0.merchant.localizedCaseInsensitiveContains(searchText)
-                || ($0.accountLabel?.localizedCaseInsensitiveContains(searchText) ?? false)
+    private var reviewTransactions: [Transaction] {
+        transactions.filter { transaction in
+            transaction.reviewState == .needsReview && matchesSearch(transaction)
         }
     }
 
-    private var attentionAlerts: [InboxAlert] {
-        alerts.filter { $0.status == .pending || $0.status == .processing || $0.status == .needsReview }
+    private var confirmedTransactions: [Transaction] {
+        transactions.filter { transaction in
+            transaction.reviewState == .confirmed && matchesSearch(transaction)
+        }
+    }
+
+    private var reviewAlerts: [InboxAlert] {
+        guard searchText.isEmpty else { return [] }
+        let representedTransactionIDs = Set(
+            transactions
+                .filter { $0.reviewState == .needsReview }
+                .map(\.id)
+        )
+        return alerts.filter { alert in
+            let hasRepresentedTransaction = alert.transactionID.map(representedTransactionIDs.contains) ?? false
+            return alert.status == .needsReview
+                && !hasRepresentedTransaction
+        }
+    }
+
+    private var processingAlerts: [InboxAlert] {
+        guard searchText.isEmpty else { return [] }
+        return alerts.filter { $0.status == .pending || $0.status == .processing }
+    }
+
+    private var hasVisibleContent: Bool {
+        !reviewTransactions.isEmpty
+            || !reviewAlerts.isEmpty
+            || !processingAlerts.isEmpty
+            || !confirmedTransactions.isEmpty
     }
 
     var body: some View {
         NavigationStack {
             Group {
-                if filteredTransactions.isEmpty && attentionAlerts.isEmpty {
+                if !hasVisibleContent {
                     EmptyStateView(
                         systemImage: "text.document",
                         title: searchText.isEmpty ? "No transactions" : "No matches",
@@ -32,9 +58,17 @@ struct TransactionsView: View {
                     )
                 } else {
                     List {
-                        if !attentionAlerts.isEmpty && searchText.isEmpty {
-                            Section("Inbox") {
-                                ForEach(attentionAlerts) { alert in
+                        if !reviewTransactions.isEmpty || !reviewAlerts.isEmpty {
+                            Section("Review Required") {
+                                ForEach(reviewTransactions) { transaction in
+                                    NavigationLink {
+                                        TransactionDetailView(transaction: transaction)
+                                    } label: {
+                                        ReviewTransactionRow(transaction: transaction)
+                                    }
+                                }
+
+                                ForEach(reviewAlerts) { alert in
                                     NavigationLink {
                                         AlertProcessingDetailView(alert: alert)
                                     } label: {
@@ -44,12 +78,26 @@ struct TransactionsView: View {
                             }
                         }
 
-                        Section("Transactions") {
-                            ForEach(filteredTransactions) { transaction in
-                                NavigationLink {
-                                    TransactionDetailView(transaction: transaction)
-                                } label: {
-                                    TransactionRow(transaction: transaction)
+                        if !processingAlerts.isEmpty {
+                            Section("Processing") {
+                                ForEach(processingAlerts) { alert in
+                                    NavigationLink {
+                                        AlertProcessingDetailView(alert: alert)
+                                    } label: {
+                                        AlertQueueRow(alert: alert)
+                                    }
+                                }
+                            }
+                        }
+
+                        if !confirmedTransactions.isEmpty {
+                            Section("Transactions") {
+                                ForEach(confirmedTransactions) { transaction in
+                                    NavigationLink {
+                                        TransactionDetailView(transaction: transaction)
+                                    } label: {
+                                        TransactionRow(transaction: transaction)
+                                    }
                                 }
                             }
                         }
@@ -72,6 +120,76 @@ struct TransactionsView: View {
             .sheet(isPresented: $showingManualImport) {
                 ManualAlertImportView()
             }
+        }
+    }
+
+    private func matchesSearch(_ transaction: Transaction) -> Bool {
+        searchText.isEmpty
+            || transaction.merchant.localizedCaseInsensitiveContains(searchText)
+            || (transaction.accountLabel?.localizedCaseInsensitiveContains(searchText) ?? false)
+    }
+}
+
+private struct ReviewTransactionRow: View {
+    let transaction: Transaction
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(transaction.merchant)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(
+                        CurrencyFormatter.string(
+                            minorUnits: transaction.amountMinorUnits,
+                            currencyCode: transaction.currencyCode
+                        )
+                    )
+                    .font(.headline.monospacedDigit())
+                }
+
+                Text(transaction.accountLabel ?? "Unknown account")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Text(transaction.ownerReviewReason)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "Review required, \(transaction.merchant), \(CurrencyFormatter.string(minorUnits: transaction.amountMinorUnits, currencyCode: transaction.currencyCode)), account \(transaction.accountLabel ?? "unknown"), \(transaction.ownerReviewReason)"
+        )
+        .accessibilityIdentifier("review-required-transaction-\(transaction.id.uuidString.lowercased())")
+    }
+}
+
+extension Transaction {
+    var ownerReviewReason: String {
+        let merchantNeedsReview =
+            merchant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || merchant.localizedCaseInsensitiveCompare("Unknown Merchant") == .orderedSame
+        let dateNeedsReview = dateEvidenceText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+
+        return switch (merchantNeedsReview, dateNeedsReview) {
+        case (true, true):
+            "Model merchant and date outputs were empty; receipt time was used"
+        case (true, false):
+            "Model merchant or counterparty output was empty"
+        case (false, true):
+            "Model date output was empty; the SMS receipt time was used"
+        case (false, false):
+            "Confirm the extracted details before completing review"
         }
     }
 }

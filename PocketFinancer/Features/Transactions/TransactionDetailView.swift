@@ -30,13 +30,39 @@ struct TransactionDetailView: View {
                     Text(transaction.merchant)
                         .font(.title3.weight(.semibold))
                     if transaction.reviewState == .needsReview {
-                        Label("Check this extraction", systemImage: "exclamationmark.triangle.fill")
+                        Label(transaction.ownerReviewReason, systemImage: "exclamationmark.triangle.fill")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
+            }
+
+            if transaction.reviewState == .needsReview {
+                Section {
+                    Label(
+                        "Already saved to \(transaction.accountLabel ?? "an unknown account")",
+                        systemImage: "externaldrive.fill.badge.checkmark"
+                    )
+                    .font(.subheadline.weight(.semibold))
+
+                    Text(transaction.ownerReviewReason)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        showingEdit = true
+                    } label: {
+                        Label("Review & Confirm", systemImage: "checkmark.circle")
+                    }
+                    .accessibilityIdentifier("review-and-confirm-transaction")
+                } header: {
+                    Text("Review Required")
+                } footer: {
+                    Text("Confirming keeps the original model output and evidence in the processing history.")
+                }
             }
 
             Section("Details") {
@@ -91,13 +117,13 @@ struct TransactionDetailView: View {
                 }
             }
         }
-        .navigationTitle("Transaction")
+        .navigationTitle(transaction.reviewState == .needsReview ? "Review Transaction" : "Transaction")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            Button("Edit") { showingEdit = true }
+            Button(transaction.reviewState == .needsReview ? "Review" : "Edit") { showingEdit = true }
         }
         .sheet(isPresented: $showingEdit) {
-            TransactionEditView(transaction: transaction, sourceAlert: sourceAlert)
+            TransactionEditView(transaction: transaction)
         }
         .confirmationDialog(
             "Delete this transaction?",
@@ -123,16 +149,17 @@ struct TransactionDetailView: View {
     }
 
     private func loadSourceAlert() {
-        let alerts = (try? modelContext.fetch(FetchDescriptor<InboxAlert>())) ?? []
-        sourceAlert = alerts.first { $0.id == transaction.sourceAlertID }
+        sourceAlert = try? fetchSourceAlert()
     }
 
     private func deleteTransaction() {
-        sourceAlert?.transactionID = nil
-        sourceAlert?.status = .needsReview
-        sourceAlert?.updatedAt = .now
-        modelContext.delete(transaction)
         do {
+            if let persistedSourceAlert = try fetchSourceAlert() {
+                persistedSourceAlert.transactionID = nil
+                persistedSourceAlert.status = .needsReview
+                persistedSourceAlert.updatedAt = .now
+            }
+            modelContext.delete(transaction)
             try modelContext.save()
             dismiss()
         } catch {
@@ -140,41 +167,82 @@ struct TransactionDetailView: View {
             deletionError = "The change could not be saved. Your transaction is still available."
         }
     }
+
+    private func fetchSourceAlert() throws -> InboxAlert? {
+        let sourceAlertID = transaction.sourceAlertID
+        var descriptor = FetchDescriptor<InboxAlert>(
+            predicate: #Predicate { $0.id == sourceAlertID }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first
+    }
 }
 
 private struct TransactionEditView: View {
     @Bindable var transaction: Transaction
-    let sourceAlert: InboxAlert?
+    @Query(sort: \Account.name) private var accounts: [Account]
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @State private var amountText: String
     @State private var merchant: String
     @State private var direction: TransactionDirection
     @State private var occurredAt: Date
+    @State private var selectedAccountID: UUID?
     @State private var errorMessage: String?
 
-    init(transaction: Transaction, sourceAlert: InboxAlert?) {
+    init(transaction: Transaction) {
         self.transaction = transaction
-        self.sourceAlert = sourceAlert
         _amountText = State(initialValue: NSDecimalNumber(decimal: transaction.decimalAmount).stringValue)
         _merchant = State(initialValue: transaction.merchant)
         _direction = State(initialValue: transaction.direction)
         _occurredAt = State(initialValue: transaction.occurredAt)
+        _selectedAccountID = State(initialValue: transaction.accountID)
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Amount", text: $amountText)
-                    .keyboardType(.decimalPad)
-                TextField("Merchant", text: $merchant)
-                Picker("Direction", selection: $direction) {
-                    Text("Debit").tag(TransactionDirection.debit)
-                    Text("Credit").tag(TransactionDirection.credit)
+                Section("Transaction") {
+                    TextField("Amount", text: $amountText)
+                        .keyboardType(.decimalPad)
+                        .accessibilityIdentifier("transaction-amount-field")
+                    TextField("Merchant", text: $merchant)
+                        .accessibilityIdentifier("transaction-merchant-field")
+                    Picker("Direction", selection: $direction) {
+                        Text("Debit").tag(TransactionDirection.debit)
+                        Text("Credit").tag(TransactionDirection.credit)
+                    }
+                    DatePicker("Date", selection: $occurredAt)
                 }
-                DatePicker("Date", selection: $occurredAt)
+
+                Section {
+                    Picker("Save against", selection: $selectedAccountID) {
+                        Text("Choose an account").tag(nil as UUID?)
+                        if let selectedAccountID,
+                            !accounts.contains(where: { $0.id == selectedAccountID })
+                        {
+                            Text("Unavailable — \(transaction.accountLabel ?? "choose another account")")
+                                .tag(Optional(selectedAccountID))
+                        }
+                        ForEach(accounts) { account in
+                            Text(account.name).tag(Optional(account.id))
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    .accessibilityIdentifier("transaction-account-picker")
+
+                    if accounts.isEmpty {
+                        Text("No local account records are available for selection.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Account")
+                } footer: {
+                    Text("The confirmed amount will be saved against this account.")
+                }
             }
-            .navigationTitle("Edit Transaction")
+            .navigationTitle(transaction.reviewState == .needsReview ? "Review Transaction" : "Edit Transaction")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -182,6 +250,7 @@ private struct TransactionEditView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
+                        .accessibilityIdentifier("save-transaction-edit")
                 }
             }
             .alert(
@@ -204,23 +273,58 @@ private struct TransactionEditView: View {
             let minorUnits = try? AmountParser.minorUnits(
                 from: "INR \(amountText)",
                 currencyCode: transaction.currencyCode
-            ),
-            !merchant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         else {
-            errorMessage = "Enter a positive amount with no more than two decimal places and a merchant name."
+            errorMessage = "Enter a positive amount with no more than two decimal places."
             return
         }
 
+        let trimmedMerchant = merchant.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMerchant.isEmpty else {
+            errorMessage = "Enter a merchant or counterparty name."
+            return
+        }
+
+        guard
+            let selectedAccountID,
+            let selectedAccount = accounts.first(where: { $0.id == selectedAccountID })
+        else {
+            errorMessage = "Choose an existing account for this transaction."
+            return
+        }
+
+        let sourceAlert: InboxAlert
+        do {
+            guard let persistedSourceAlert = try fetchSourceAlert() else {
+                errorMessage = "The source alert is missing, so this review cannot be saved safely."
+                return
+            }
+            sourceAlert = persistedSourceAlert
+        } catch {
+            errorMessage = "The source alert could not be loaded. No changes were saved."
+            return
+        }
+
+        let valuesChanged =
+            transaction.amountMinorUnits != minorUnits
+            || transaction.merchant != trimmedMerchant
+            || transaction.direction != direction
+            || transaction.occurredAt != occurredAt
+            || transaction.accountID != selectedAccount.id
+            || transaction.accountLabel != selectedAccount.name
+
         transaction.amountMinorUnits = minorUnits
-        transaction.merchant = merchant.trimmingCharacters(in: .whitespacesAndNewlines)
+        transaction.merchant = trimmedMerchant
         transaction.direction = direction
         transaction.occurredAt = occurredAt
-        transaction.isEdited = true
+        transaction.accountID = selectedAccount.id
+        transaction.accountLabel = selectedAccount.name
+        transaction.isEdited = transaction.isEdited || valuesChanged
         transaction.reviewState = .confirmed
         transaction.updatedAt = .now
-        sourceAlert?.status = .imported
-        sourceAlert?.lastErrorCode = nil
-        sourceAlert?.updatedAt = .now
+        sourceAlert.status = .imported
+        sourceAlert.lastErrorCode = nil
+        sourceAlert.updatedAt = .now
         do {
             try modelContext.save()
             dismiss()
@@ -228,5 +332,14 @@ private struct TransactionEditView: View {
             modelContext.rollback()
             errorMessage = "The correction could not be saved. The previous transaction remains unchanged."
         }
+    }
+
+    private func fetchSourceAlert() throws -> InboxAlert? {
+        let sourceAlertID = transaction.sourceAlertID
+        var descriptor = FetchDescriptor<InboxAlert>(
+            predicate: #Predicate { $0.id == sourceAlertID }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first
     }
 }
