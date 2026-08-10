@@ -92,7 +92,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("erase-all-data")
                 } footer: {
                     Text(
-                        "Deletes transactions, accounts, queued alerts, and retained evidence from this app on this iPhone."
+                        "Invalidates active processing and deletes transactions, accounts, queued alerts, audit history, and retained evidence from this app on this iPhone."
                     )
                 }
 

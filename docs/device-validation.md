@@ -11,7 +11,7 @@ These checks cannot be proven by a simulator or CI. Run them on the signed iPhon
 5. Choose Run Immediately and save the automation.
 6. Send a synthetic debit alert while the phone is unlocked, then while locked after one unlock.
 7. Open the alert's **Processing Details** and confirm its persisted attempt shows exact instructions/request, the post-schema `ParsedAlertDraft`, classification/direction/amount/merchant/account/date validation-stage outcomes, response/total timing, safe result code, disposition, and immutable accepted transaction snapshot. Confirm the current-contract preview and current ledger are labeled separately from historical runs.
-8. Confirm exactly one transaction appears, the evidence is correct, and replaying the same alert within two minutes is marked duplicate.
+8. Confirm exactly one transaction appears, the evidence is correct, and replaying the same normalized body within 15 seconds is marked duplicate even when sender metadata differs. Confirm the same body after 15 seconds can be processed as a legitimate second transaction.
 9. Edit the transaction and confirm **Edited by owner** changes while the original run's draft and accepted snapshot remain unchanged. Retry it and confirm Pocket Financer preserves the owner correction without starting another model attempt or changing the historical run.
 10. After the proof works, create three otherwise identical automations for `Rs`, `INR`, and `₹`, then remove the `debited` automation. Multiple Message criteria are AND, so the currency markers must not be placed together in one trigger.
 11. Disable Apple Intelligence or use a not-ready state; confirm the alert remains pending and succeeds after retry.

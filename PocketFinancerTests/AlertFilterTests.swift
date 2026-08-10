@@ -63,6 +63,50 @@ final class AlertFilterTests: XCTestCase {
     }
 
     @MainActor
+    func testAllowsCompletedTransactionDescribedAsWithoutOTP() {
+        let trace = AlertFilter().trace(
+            sender: "AX-HDFCBK",
+            body: "Rs.500.00 spent on Card ending XX6789 without OTP."
+        )
+
+        XCTAssertEqual(trace.result.decision, .eligible)
+        XCTAssertEqual(
+            trace.stages.first { $0.id == .oneTimePassword }?.state,
+            .passed
+        )
+    }
+
+    @MainActor
+    func testAllowsCompletedTransactionWithPromotionalOffersFooter() {
+        let trace = AlertFilter().trace(
+            sender: "AX-HDFCBK",
+            body: "Rs.500.00 spent on Card ending XX6789. Explore offers in the bank app."
+        )
+
+        XCTAssertEqual(trace.result.decision, .eligible)
+        XCTAssertEqual(trace.stages.first { $0.id == .promotion }?.state, .passed)
+    }
+
+    @MainActor
+    func testExceptionsStillRejectCredentialOTPAndStandalonePromotion() {
+        let filter = AlertFilter()
+        XCTAssertEqual(
+            filter.evaluate(
+                sender: "AX-HDFCBK",
+                body: "Rs.500.00 spent on Card ending XX6789 without OTP. OTP 123456 is your verification code."
+            ).rejectionCode,
+            .oneTimePassword
+        )
+        XCTAssertEqual(
+            filter.evaluate(
+                sender: "AX-HDFCBK",
+                body: "Exclusive offers on Card XX6789: get Rs.500 cashback. Apply now."
+            ).rejectionCode,
+            .promotion
+        )
+    }
+
+    @MainActor
     func testAllowsBlankSenderAndLongEligibleBody() {
         let longBody = "Rs.500.00 credited to a/c XXXXXX0000 " + String(repeating: "a", count: 10_000)
         XCTAssertTrue(AlertFilter().evaluate(sender: "", body: longBody).isEligible)

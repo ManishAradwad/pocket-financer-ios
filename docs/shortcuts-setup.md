@@ -53,7 +53,7 @@ Verify that:
 3. Keep Sender empty in every copy.
 4. Remove or disable the original `debited` automation so debit messages do not intentionally fire twice.
 
-Do not put all three currency terms into one Message trigger. Apple combines multiple communication criteria with AND rather than OR. A message that happens to match two separate automations may run twice; Pocket Financer's exact-body two-minute duplicate window absorbs that overlap.
+Do not put all three currency terms into one Message trigger. Apple combines multiple communication criteria with AND rather than OR. A message that happens to match two separate automations may run twice; Pocket Financer's sender-independent normalized-body duplicate window absorbs deliveries that arrive within 15 seconds.
 
 ## Troubleshooting
 

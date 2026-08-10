@@ -59,9 +59,16 @@ final class AlertIngestionService {
 
     /// Main-actor reentrancy permits another service instance to enter while a parser
     /// request is suspended. A process-wide token prevents a second attempt for the same
-    /// durable alert. The map intentionally starts empty after a process restart so a
+    /// durable alert. The epoch invalidates both active claims and queue batches captured
+    /// before an owner erase. These values intentionally reset after process restart so a
     /// persisted `.processing` alert can be recovered.
-    private static var processingClaims: [UUID: UUID] = [:]
+    private struct ProcessingClaim: Equatable {
+        let token: UUID
+        let epoch: UInt64
+    }
+
+    private static var processingClaims: [UUID: ProcessingClaim] = [:]
+    private static var processingEpoch: UInt64 = 0
 
     init(
         context: ModelContext,
@@ -229,6 +236,7 @@ final class AlertIngestionService {
 
     @discardableResult
     func processPending(limit: Int = 8, includeNeedsReview: Bool = false) async -> Int {
+        let batchEpoch = Self.processingEpoch
         let descriptor = FetchDescriptor<InboxAlert>(sortBy: [SortDescriptor(\InboxAlert.createdAt)])
         guard let alerts = try? context.fetch(descriptor) else { return 0 }
 
@@ -241,18 +249,23 @@ final class AlertIngestionService {
 
         var completed = 0
         for alert in eligible {
-            guard !Task.isCancelled else { break }
+            guard !Task.isCancelled, Self.processingEpoch == batchEpoch else { break }
             do {
                 if try await classifyAndProcessIfClaimed(
                     alert,
-                    allowBeyondAutomaticAttemptLimit: includeNeedsReview
+                    allowBeyondAutomaticAttemptLimit: includeNeedsReview,
+                    expectedProcessingEpoch: batchEpoch
                 ) != nil {
                     completed += 1
                 }
             } catch {
-                alert.status = .pending
-                alert.lastErrorCode = "persistence_failed"
-                alert.updatedAt = .now
+                guard
+                    Self.processingEpoch == batchEpoch,
+                    let currentAlert = try? findAlert(id: alert.id)
+                else { break }
+                currentAlert.status = .pending
+                currentAlert.lastErrorCode = "persistence_failed"
+                currentAlert.updatedAt = .now
                 try? save()
             }
         }
@@ -261,49 +274,64 @@ final class AlertIngestionService {
 
     private func classifyAndProcessIfClaimed(
         _ alert: InboxAlert,
-        allowBeyondAutomaticAttemptLimit: Bool
+        allowBeyondAutomaticAttemptLimit: Bool,
+        expectedProcessingEpoch: UInt64? = nil
     ) async throws -> IngestionReceipt? {
-        guard !Task.isCancelled, let claimToken = Self.acquireClaim(for: alert.id) else { return nil }
-        defer { Self.releaseClaim(for: alert.id, token: claimToken) }
+        let alertID = alert.id
+        guard
+            let currentAlert = try findAlert(id: alertID),
+            !Task.isCancelled,
+            let claim = Self.acquireClaim(
+                for: alertID,
+                expectedProcessingEpoch: expectedProcessingEpoch
+            )
+        else { return nil }
+        defer { Self.releaseClaim(for: alertID, claim: claim) }
 
-        if !allowBeyondAutomaticAttemptLimit, alert.attemptCount >= Self.automaticAttemptLimit {
-            alert.status = .needsReview
-            alert.lastErrorCode = "automatic_retry_limit_reached"
-            alert.updatedAt = .now
+        if !allowBeyondAutomaticAttemptLimit,
+            currentAlert.attemptCount >= Self.automaticAttemptLimit
+        {
+            currentAlert.status = .needsReview
+            currentAlert.lastErrorCode = "automatic_retry_limit_reached"
+            currentAlert.updatedAt = .now
             try save()
-            return IngestionReceipt(alertID: alert.id, disposition: .needsReview)
+            return IngestionReceipt(alertID: currentAlert.id, disposition: .needsReview)
         }
 
-        let filterResult = filter.evaluate(sender: alert.sender, body: alert.rawBody)
+        let filterResult = filter.evaluate(sender: currentAlert.sender, body: currentAlert.rawBody)
         switch filterResult.decision {
         case .eligible:
-            return try await process(alert, claimToken: claimToken)
+            return try await process(currentAlert, claim: claim)
         case .rejectAndErase:
             reject(
-                alert,
+                currentAlert,
                 code: filterResult.rejectionCode?.rawValue ?? AlertRejectionCode.emptyBody.rawValue
             )
             try save()
-            return IngestionReceipt(alertID: alert.id, disposition: .rejected)
+            return IngestionReceipt(alertID: currentAlert.id, disposition: .rejected)
         case .needsReview:
-            alert.status = .needsReview
-            alert.rejectionCode = nil
-            alert.lastErrorCode =
+            currentAlert.status = .needsReview
+            currentAlert.rejectionCode = nil
+            currentAlert.lastErrorCode =
                 filterResult.rejectionCode?.rawValue ?? AlertRejectionCode.missingTransactionVerb.rawValue
-            alert.updatedAt = .now
+            currentAlert.updatedAt = .now
             try save()
-            return IngestionReceipt(alertID: alert.id, disposition: .needsReview)
+            return IngestionReceipt(alertID: currentAlert.id, disposition: .needsReview)
         }
     }
 
-    private func process(_ alert: InboxAlert, claimToken: UUID) async throws -> IngestionReceipt {
-        if let existing = try findTransaction(for: alert), existing.isEdited {
+    private func process(_ alert: InboxAlert, claim: ProcessingClaim) async throws -> IngestionReceipt {
+        let alertID = alert.id
+        let transactionAtStart = try findTransaction(for: alert)
+        if let transactionAtStart, transactionAtStart.isEdited {
             alert.status = .imported
             alert.lastErrorCode = nil
             alert.updatedAt = .now
             try save()
             return IngestionReceipt(alertID: alert.id, disposition: .imported)
         }
+        let transactionIDAtStart = transactionAtStart?.id
+        let transactionUpdatedAtAtStart = transactionAtStart?.updatedAt
 
         let startedAt = Date.now
         alert.status = .processing
@@ -340,6 +368,17 @@ final class AlertIngestionService {
                 receivedAt: alert.receivedAt
             )
         } catch let error as TransactionParserError {
+            guard Self.ownsClaim(for: alertID, claim: claim) else {
+                return IngestionReceipt(alertID: alertID, disposition: .processingIncomplete)
+            }
+            if let preserved = try preserveOwnerChangeIfNeeded(
+                alert: alert,
+                transactionIDAtStart: transactionIDAtStart,
+                transactionUpdatedAtAtStart: transactionUpdatedAtAtStart,
+                extractionRun: extractionRun
+            ) {
+                return preserved
+            }
             let completedAt = Date.now
             alert.status = error.isRetryable ? .pending : .needsReview
             alert.lastErrorCode = error.safeCode
@@ -356,6 +395,17 @@ final class AlertIngestionService {
                 disposition: error.isRetryable ? .queued : .needsReview
             )
         } catch {
+            guard Self.ownsClaim(for: alertID, claim: claim) else {
+                return IngestionReceipt(alertID: alertID, disposition: .processingIncomplete)
+            }
+            if let preserved = try preserveOwnerChangeIfNeeded(
+                alert: alert,
+                transactionIDAtStart: transactionIDAtStart,
+                transactionUpdatedAtAtStart: transactionUpdatedAtAtStart,
+                extractionRun: extractionRun
+            ) {
+                return preserved
+            }
             let completedAt = Date.now
             alert.status = .pending
             alert.lastErrorCode = "parser_failed"
@@ -371,8 +421,8 @@ final class AlertIngestionService {
         }
 
         // Only the process-wide claim owner may apply a response after this suspension.
-        guard Self.ownsClaim(for: alert.id, token: claimToken) else {
-            return IngestionReceipt(alertID: alert.id, disposition: .queued)
+        guard Self.ownsClaim(for: alertID, claim: claim) else {
+            return IngestionReceipt(alertID: alertID, disposition: .processingIncomplete)
         }
 
         extractionRun.recordParserDraft(draft, receivedAt: .now)
@@ -387,6 +437,15 @@ final class AlertIngestionService {
         extractionRun.recordValidation(validationReport)
         // Persist every validation stage before mutating the accepted ledger state.
         try save()
+
+        if let preserved = try preserveOwnerChangeIfNeeded(
+            alert: alert,
+            transactionIDAtStart: transactionIDAtStart,
+            transactionUpdatedAtAtStart: transactionUpdatedAtAtStart,
+            extractionRun: extractionRun
+        ) {
+            return preserved
+        }
 
         switch validationReport.result {
         case .failure(let issue):
@@ -497,7 +556,46 @@ final class AlertIngestionService {
 
     private func findTransaction(for alert: InboxAlert) throws -> Transaction? {
         guard let transactionID = alert.transactionID else { return nil }
-        return try context.fetch(FetchDescriptor<Transaction>()).first { $0.id == transactionID }
+        return try findTransaction(id: transactionID)
+    }
+
+    private func findTransaction(id: UUID) throws -> Transaction? {
+        try context.fetch(FetchDescriptor<Transaction>()).first { $0.id == id }
+    }
+
+    private func preserveOwnerChangeIfNeeded(
+        alert: InboxAlert,
+        transactionIDAtStart: UUID?,
+        transactionUpdatedAtAtStart: Date?,
+        extractionRun: ExtractionRun
+    ) throws -> IngestionReceipt? {
+        guard let transactionIDAtStart, let transactionUpdatedAtAtStart else { return nil }
+
+        let currentTransaction = try findTransaction(id: transactionIDAtStart)
+        let ownerChangedOrDeletedTransaction =
+            alert.transactionID != transactionIDAtStart
+            || currentTransaction == nil
+            || currentTransaction?.isEdited == true
+            || currentTransaction?.updatedAt != transactionUpdatedAtAtStart
+        guard ownerChangedOrDeletedTransaction else { return nil }
+
+        extractionRun.recordValidationNotPerformed()
+        let disposition: IngestionDisposition
+        let runDisposition: ExtractionRunDisposition
+        if alert.status == .imported || currentTransaction?.reviewState == .confirmed {
+            disposition = .imported
+            runDisposition = .imported
+        } else {
+            disposition = .needsReview
+            runDisposition = .needsReview
+        }
+        extractionRun.complete(
+            safeResultCode: "owner_change_preserved",
+            disposition: runDisposition,
+            at: .now
+        )
+        try save()
+        return IngestionReceipt(alertID: alert.id, disposition: disposition)
     }
 
     private func resolveAccount(label: String, sender: String, body: String) throws -> Account {
@@ -539,19 +637,30 @@ final class AlertIngestionService {
         }
     }
 
-    private static func acquireClaim(for alertID: UUID) -> UUID? {
-        guard processingClaims[alertID] == nil else { return nil }
-        let token = UUID()
-        processingClaims[alertID] = token
-        return token
+    private static func acquireClaim(
+        for alertID: UUID,
+        expectedProcessingEpoch: UInt64?
+    ) -> ProcessingClaim? {
+        guard
+            expectedProcessingEpoch == nil || expectedProcessingEpoch == processingEpoch,
+            processingClaims[alertID] == nil
+        else { return nil }
+        let claim = ProcessingClaim(token: UUID(), epoch: processingEpoch)
+        processingClaims[alertID] = claim
+        return claim
     }
 
-    private static func ownsClaim(for alertID: UUID, token: UUID) -> Bool {
-        processingClaims[alertID] == token
+    private static func ownsClaim(for alertID: UUID, claim: ProcessingClaim) -> Bool {
+        claim.epoch == processingEpoch && processingClaims[alertID] == claim
     }
 
-    private static func releaseClaim(for alertID: UUID, token: UUID) {
-        guard ownsClaim(for: alertID, token: token) else { return }
+    private static func releaseClaim(for alertID: UUID, claim: ProcessingClaim) {
+        guard ownsClaim(for: alertID, claim: claim) else { return }
         processingClaims[alertID] = nil
+    }
+
+    static func invalidateAllProcessingClaims() {
+        processingEpoch &+= 1
+        processingClaims.removeAll()
     }
 }

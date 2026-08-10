@@ -56,6 +56,8 @@ struct AlertFilterTrace: Equatable, Sendable {
 }
 
 struct AlertFilter: Sendable {
+    static let rulesVersion = "ios-eligibility.v2"
+
     private let amount = Pattern(
         #"(?:rs\.?|inr|₹)\s*[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s*(?:rs\.?|inr|₹)"#, caseInsensitive: true)
     private let account = Pattern(
@@ -67,6 +69,8 @@ struct AlertFilter: Sendable {
     )
     private let oneTimePassword = Pattern(
         #"\botp\b|\bone.?time.?password\b|\bverification.?code\b"#, caseInsensitive: true)
+    private let nonCredentialOneTimePassword = Pattern(
+        #"\bwithout\s+otp\b"#, caseInsensitive: true)
     private let collectRequest = Pattern(
         #"has\s+requested\s+money|requested\s+Rs\.?|collect\s+request|mandate\s+request|request\s+from\s+you"#,
         caseInsensitive: true)
@@ -88,6 +92,11 @@ struct AlertFilter: Sendable {
     /// Reconstructs the deterministic checks without using the sender label.
     /// The trace contains no additional sensitive data and is safe to derive on demand.
     func trace(sender _: String, body: String) -> AlertFilterTrace {
+        let credentialBody = nonCredentialOneTimePassword.replacingMatches(in: body, with: " ")
+        let hasTransactionEligibilityCues =
+            amount.contains(in: body)
+            && account.contains(in: body)
+            && transactionVerb.contains(in: body)
         let checks:
             [(
                 id: AlertFilterStageID,
@@ -109,9 +118,9 @@ struct AlertFilter: Sendable {
                 ),
                 (
                     .oneTimePassword,
-                    "No OTP or verification marker",
-                    "No one-time password or verification-code wording was found.",
-                    !oneTimePassword.contains(in: body),
+                    "No credential OTP or verification marker",
+                    "No one-time password or verification-code wording requiring credential handling was found.",
+                    !oneTimePassword.contains(in: credentialBody),
                     "otp",
                     .oneTimePassword,
                     .rejectAndErase
@@ -136,9 +145,9 @@ struct AlertFilter: Sendable {
                 ),
                 (
                     .promotion,
-                    "No high-confidence promotion marker",
-                    "No offer, pre-approved solicitation, or call-to-action wording was found.",
-                    !promotion.contains(in: body),
+                    "Not a standalone promotion",
+                    "No standalone offer, pre-approved solicitation, or call-to-action wording was found.",
+                    !promotion.contains(in: body) || hasTransactionEligibilityCues,
                     "promotion",
                     .promotion,
                     .rejectAndErase
@@ -223,5 +232,14 @@ private struct Pattern: @unchecked Sendable {
     func contains(in value: String) -> Bool {
         let range = NSRange(value.startIndex..<value.endIndex, in: value)
         return expression.firstMatch(in: value, range: range) != nil
+    }
+
+    func replacingMatches(in value: String, with replacement: String) -> String {
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return expression.stringByReplacingMatches(
+            in: value,
+            range: range,
+            withTemplate: replacement
+        )
     }
 }

@@ -2,14 +2,14 @@
 
 ## System boundary
 
-Pocket Financer cannot read the iOS Messages database. A user creates a personal automation in Shortcuts and chooses the app's `Import Transaction Alert` action. The action first stores the alert, then runs a bounded local pipeline.
+Pocket Financer cannot read the iOS Messages database. A user creates a personal automation in Shortcuts and chooses the app's `Import Transaction Alert` action. The action only stores or deduplicates the alert and returns promptly; after onboarding, the foreground app drains the durable queue through the bounded local pipeline.
 
 ```mermaid
 flowchart LR
     A["User-selected Shortcut input"] --> B["User-created Shortcuts automation"]
     B --> C["Import Transaction Alert App Intent"]
-    C --> D["SwiftData inbox write"]
-    D --> E["Deterministic eligibility filter"]
+    C --> D["SwiftData inbox write; Shortcut returns"]
+    D --> E["Foreground deterministic eligibility filter"]
     E -->|rejected| F["Erase raw body; retain safe reason"]
     E -->|eligible| G["Apple Foundation Models parser"]
     G --> H["Evidence validator"]
@@ -37,7 +37,7 @@ The processing record is deliberately not a single mutable blob called “model 
 2. **Exact app-visible parser draft:** Foundation Models produces its declared structured profile and the adapter maps it into `ParsedAlertDraft`. V2 persists those exact post-schema fields before validation. The current adapter does not persist `Response.rawContent` or the session transcript, and Apple's API does not expose hidden reasoning.
 3. **Validation:** `EvidenceValidator` treats the draft as untrusted and records passed, failed, or not-run outcomes for classification, direction, amount, merchant, account, and date. The attempt also stores its safe result code and disposition.
 4. **Accepted saved transaction:** only a grounded validator result can create or update a `Transaction`. The same run stores an immutable snapshot of the accepted amount, currency, direction, merchant, account, date, review state, and retained amount/date evidence.
-5. **Owner correction:** a later edit mutates the current ledger entry and sets `isEdited`; it does not rewrite any prior run's parser draft, validation stages, or accepted snapshot.
+5. **Owner correction:** a later edit mutates the current ledger entry and sets `isEdited`; it does not rewrite any prior run's parser draft, validation stages, or accepted snapshot. A retry that was already running detects an owner edit or deletion and yields instead of overwriting or recreating the transaction.
 
 Pocket Financer V2 adds `ExtractionRun` to the versioned SwiftData schema and links every run to its source alert. The production parser checks its explicit U.S. English model-processing locale with `supportsLocale` and exposes the identifiers returned by `supportedLanguages`; `Locale.current` remains separate for India-region formatting. A run is inserted and saved with its attempt index, exact instructions/request, contract/profile versions, exact checked model-locale identifier, parser identity, and start time before inference begins. If a structured response arrives, the mapped `ParsedAlertDraft` and response time are saved before validation. Validation stages are then saved before the ledger is mutated. Finally, a safe result code, terminal disposition, completion time, and—when accepted—immutable transaction snapshot are committed. Retries append new runs; they do not rewrite older attempts.
 
@@ -63,6 +63,6 @@ The public iOS 26 Foundation Models interface used by this build does not expose
 
 The iOS filter mirrors the body-based Android stages: require a currency amount, masked account/card, and completed transaction verb; reject OTP/verification and collect/mandate requests. Sender is optional metadata, never a trigger or eligibility requirement, because real bank and telecom sender formats vary substantially. Sanitized cases live in `PocketFinancerTests/Fixtures/transaction_parity_v1.json` and should be reviewed against the sibling Android repository when either pipeline changes.
 
-Android can use a provider message ID as an authoritative identity. Shortcuts does not currently expose an equivalent stable identifier, so iOS additionally treats an exact normalized-sender/body match within two minutes as the same delivery. That bounded heuristic is an intentional platform divergence; an identical alert after the window remains a legitimate transaction.
+Android can use a provider message ID as an authoritative identity. Shortcuts does not currently expose an equivalent stable identifier, so iOS treats the same normalized body delivered within 15 seconds as one delivery, independent of optional sender metadata. That bounded heuristic absorbs overlapping currency automations; an identical alert after the window remains a legitimate transaction.
 
 The repositories remain independent. A monorepo or submodule would couple platform releases and tooling without sharing executable code; sibling checkouts plus parity fixtures give a clearer ownership boundary.

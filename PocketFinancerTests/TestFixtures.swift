@@ -69,10 +69,30 @@ struct SlowTransactionParser: TransactionParsing {
 struct InspectingTransactionParser: TransactionParsing {
     let parserName = "Inspecting Test Parser"
     let requestMetadata = TestFixtures.parserRequestMetadata
-    let inspectBeforeResponse: @MainActor @Sendable () -> Void
+    let inspectBeforeResponse: @MainActor @Sendable () throws -> Void
 
     func parse(body: String, sender: String, receivedAt: Date) async throws -> ParsedAlertDraft {
-        inspectBeforeResponse()
+        try inspectBeforeResponse()
+        return TestFixtures.validDraft
+    }
+}
+
+@MainActor
+final class InspectingFirstResponseTransactionParser: TransactionParsing {
+    let parserName = "Inspecting First Response Test Parser"
+    let requestMetadata = TestFixtures.parserRequestMetadata
+    let inspectFirstResponse: @MainActor @Sendable () throws -> Void
+    private(set) var invocationCount = 0
+
+    init(inspectFirstResponse: @escaping @MainActor @Sendable () throws -> Void) {
+        self.inspectFirstResponse = inspectFirstResponse
+    }
+
+    func parse(body: String, sender: String, receivedAt: Date) async throws -> ParsedAlertDraft {
+        invocationCount += 1
+        if invocationCount == 1 {
+            try inspectFirstResponse()
+        }
         return TestFixtures.validDraft
     }
 }

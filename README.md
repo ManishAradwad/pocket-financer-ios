@@ -20,7 +20,7 @@ Financial alerts, prompts, model output, and transactions are not sent to a Pock
 - Inbox-first persistence before filtering or inference, so interruption does not silently lose an eligible alert.
 - Sender-independent eligibility: the alert body, not a bank's variable sender format, determines admission.
 - Deterministic currency/account/verb checks plus OTP and collect-request rejection.
-- Same-sender/body duplicate protection for overlapping `Rs`, `INR`, and `₹` automations; an omitted sender is treated consistently.
+- Sender-independent normalized-body duplicate protection for 15 seconds across overlapping `Rs`, `INR`, and `₹` automations.
 - Structured local model extraction with strict source-evidence validation and manual review on uncertainty.
 - Runtime validation of the app's U.S. English model-processing locale with `supportsLocale`, while `Locale.current` remains separate for India-region formatting; both identifiers are visible to the owner.
 - Owner-visible V2 processing history: exact request/instructions, post-schema parser draft, per-field validation stages, timing, safe code, disposition, immutable accepted snapshot, and a separate owner-edited ledger.
@@ -36,8 +36,8 @@ Financial alerts, prompts, model output, and transactions are not sent to a Pock
 flowchart LR
     A["Incoming financial SMS"] --> B["User-created Message automation"]
     B --> C["Import Transaction Alert App Intent"]
-    C --> D["Durable SwiftData inbox write"]
-    D --> E{"Deterministic body filter"}
+    C --> D["Durable SwiftData inbox write; Shortcut returns"]
+    D --> E{"Foreground deterministic body filter"}
     E -->|"OTP, request, promo, invalid"| F["Erase sensitive evidence; retain safe reason"]
     E -->|"Eligible"| G["Apple Foundation Models"]
     G --> H{"Source-evidence validator"}
@@ -45,7 +45,7 @@ flowchart LR
     H -->|"Unavailable or uncertain"| J["Retry queue or manual review"]
 ```
 
-The model is never trusted as a database writer. Amount, direction, account, merchant, and any parsed date must be grounded in the original alert before a transaction is accepted.
+The App Intent stops after the durable inbox write or duplicate decision. Once onboarding is complete, opening or foregrounding the app drains the queue through filtering, model extraction, and validation. The model is never trusted as a database writer. Amount, direction, account, merchant, and any parsed date must be grounded in the original alert before a transaction is accepted.
 
 ## Processing transparency
 
@@ -59,7 +59,7 @@ Pocket Financer's transparency contract distinguishes five concepts:
 
 The V2 SwiftData schema creates one protected `ExtractionRun` for every live-ingestion or retry model attempt. It durably captures the exact instructions and request used for that attempt, contract/profile identity, timing, the exact app-visible `ParsedAlertDraft` returned after Apple's guided schema mapping, classification/direction/amount/merchant/account/date validation-stage outcomes, a safe result code, terminal disposition, and an immutable accepted-transaction snapshot when validation succeeds. Failed or interrupted attempts remain visible rather than being overwritten by a retry.
 
-That persisted draft is the exact structured value Pocket Financer uses after schema mapping. The current adapter intentionally does not retain `Response.rawContent` or the session transcript, and Apple's API does not expose hidden reasoning. The processing screen separately shows the mutable current ledger transaction. Later owner edits do not rewrite the historical parser draft, validation record, or accepted snapshot.
+That persisted draft is the exact structured value Pocket Financer uses after schema mapping. The current adapter intentionally does not retain `Response.rawContent` or the session transcript, and Apple's API does not expose hidden reasoning. The processing screen separately shows the mutable current ledger transaction. Later owner edits do not rewrite the historical parser draft, validation record, or accepted snapshot, and an in-flight retry yields to an owner edit or deletion made while it was running.
 
 **Run Synthetic Model Test** opens a detailed report containing the exact synthetic input, instructions, request, checked model-processing locale, result of the locale support check, model-reported language identifiers, returned draft when available, validation result, safe failure, timing, configuration, and API limits. The report remains in memory, creates no transaction, and is released when its sheet is dismissed.
 
@@ -145,7 +145,7 @@ When I receive a Message where Message Contains Rs
       Source Application = empty
 ```
 
-Pocket Financer uses the automation execution time when no message timestamp is available. False positives are expected at the trigger boundary and are rejected locally; overlapping currency matches are deduplicated within two minutes.
+Pocket Financer uses the automation execution time when no message timestamp is available. False positives are expected at the trigger boundary and are rejected locally; normalized identical bodies delivered by overlapping currency automations are deduplicated for 15 seconds, independent of optional sender metadata.
 
 ## Project structure
 
@@ -174,7 +174,7 @@ pocket-financer-ios/
 - Model-only rejection is not trusted as proof of irrelevance; evidence remains available for owner review.
 - The SwiftData store is excluded from backups and protected with `NSFileProtectionCompleteUntilFirstUserAuthentication`, allowing an approved automation to save after the first unlock.
 - If the protected store cannot be opened or its schema is unsupported, access and imports pause while the original files remain in place for retry or recovery.
-- **Erase All Local Data** removes the ledger, accounts, queue, retained evidence, and persistent extraction-run history. Uninstalling removes the complete app container.
+- **Erase All Local Data** invalidates in-flight processing and removes the ledger, accounts, queue, retained evidence, and persistent extraction-run history. Uninstalling removes the complete app container.
 - No real SMS corpus, phone number, account identifier, signing value, prompt transcript, or model response belongs in source control, CI artifacts, logs, screenshots, or issues.
 
 Read [privacy and security](docs/privacy-and-security.md) before changing ingestion, persistence, inference, or diagnostics.

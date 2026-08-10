@@ -14,7 +14,7 @@ Protection is applied directly to the database directory and SQLite sidecar file
 - Exact duplicates retain safe metadata but do not create another transaction.
 - OTP, verification, promotional, collect, and other deterministically rejected alerts have their raw body, sender, and evidence-derived hashes cleared immediately. A model-only rejection retains evidence for owner review.
 - Each eligible ingestion or retry parser attempt creates a protected local `ExtractionRun`. It stores exact instructions/request, exact post-schema `ParsedAlertDraft` fields when returned, validation-stage outcomes, timing, safe code, disposition, and an immutable accepted-transaction snapshot when applicable.
-- Erase All Data deletes extraction runs, transactions, accounts, and inbox evidence in one local operation. Pocket Financer relies on iOS to reclaim deleted database pages safely; uninstalling the app removes its complete data container.
+- Erase All Data first invalidates in-flight parser work, then deletes extraction runs, transactions, accounts, and inbox evidence in one local operation. A suspended model request may finish in memory but cannot write afterward. Pocket Financer relies on iOS to reclaim deleted database pages safely; uninstalling the app removes its complete data container.
 - The detailed synthetic self-test report uses rewritten test data, remains in memory, creates no transaction or `ExtractionRun`, and is released when the Settings sheet is dismissed.
 - Exact model instructions, requests, drafts, and audit snapshots are visible only to the owner inside local app UI. They are not written to logs or telemetry.
 

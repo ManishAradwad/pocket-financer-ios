@@ -130,6 +130,39 @@ final class AlertIngestionServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testCompletedAlertFilterExceptionsRetainEvidenceAndReachModel() async throws {
+        let bodies = [
+            TestFixtures.validBody + " This debit was processed without OTP.",
+            TestFixtures.validBody + " Explore offers in the bank app.",
+        ]
+
+        for body in bodies {
+            let database = try AppDatabase(inMemory: true)
+            let context = database.container.mainContext
+            let service = AlertIngestionService(
+                context: context,
+                parser: FakeTransactionParser(result: .success(TestFixtures.validDraft))
+            )
+
+            let receipt = try await service.ingest(
+                body: body,
+                sender: "AX-HDFCBK",
+                receivedAt: TestFixtures.receivedAt,
+                sourceApplication: "Messages",
+                origin: .shortcut
+            )
+
+            XCTAssertEqual(receipt.disposition, .imported, body)
+            let alert = try XCTUnwrap(context.fetch(FetchDescriptor<InboxAlert>()).first)
+            XCTAssertEqual(alert.status, .imported, body)
+            XCTAssertEqual(alert.rawBody, body)
+            XCTAssertNil(alert.rejectionCode)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<Transaction>()).count, 1)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<ExtractionRun>()).count, 1)
+        }
+    }
+
+    @MainActor
     func testDuplicateWithinOverlapWindowKeepsMetadataWithoutSecondTransaction() async throws {
         let database = try AppDatabase(inMemory: true)
         let context = database.container.mainContext
@@ -450,6 +483,92 @@ final class AlertIngestionServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testOwnerCorrectionDuringRetryIsNotOverwrittenByReturningModel() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let initial = AlertIngestionService(
+            context: context,
+            parser: FakeTransactionParser(result: .success(TestFixtures.reviewDraft))
+        )
+        _ = try await initial.ingest(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        let transaction = try XCTUnwrap(context.fetch(FetchDescriptor<Transaction>()).first)
+        let alert = try XCTUnwrap(context.fetch(FetchDescriptor<InboxAlert>()).first)
+        let originalUpdatedAt = transaction.updatedAt
+        let parser = InspectingTransactionParser {
+            transaction.merchant = "Corrected while retry was running"
+            transaction.isEdited = true
+            transaction.reviewState = .confirmed
+            transaction.updatedAt = originalUpdatedAt.addingTimeInterval(1)
+            alert.status = .imported
+            alert.updatedAt = originalUpdatedAt.addingTimeInterval(1)
+            try context.save()
+        }
+        let retry = AlertIngestionService(context: context, parser: parser)
+
+        let receipt = try await retry.retry(alertID: alert.id)
+
+        XCTAssertEqual(receipt.disposition, .imported)
+        XCTAssertEqual(transaction.merchant, "Corrected while retry was running")
+        XCTAssertTrue(transaction.isEdited)
+        XCTAssertEqual(transaction.reviewState, .confirmed)
+        XCTAssertEqual(alert.status, .imported)
+        let runs = try context.fetch(
+            FetchDescriptor<ExtractionRun>(sortBy: [SortDescriptor(\ExtractionRun.attemptIndex)])
+        )
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertEqual(runs.last?.safeResultCode, "owner_change_preserved")
+        XCTAssertEqual(runs.last?.terminalDisposition, .imported)
+        XCTAssertNil(runs.last?.acceptedTransactionID)
+    }
+
+    @MainActor
+    func testOwnerDeletionDuringRetryIsNotRecreatedByReturningModel() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let initial = AlertIngestionService(
+            context: context,
+            parser: FakeTransactionParser(result: .success(TestFixtures.reviewDraft))
+        )
+        _ = try await initial.ingest(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        let transaction = try XCTUnwrap(context.fetch(FetchDescriptor<Transaction>()).first)
+        let alert = try XCTUnwrap(context.fetch(FetchDescriptor<InboxAlert>()).first)
+        let parser = InspectingTransactionParser {
+            alert.transactionID = nil
+            alert.status = .needsReview
+            alert.updatedAt = .now
+            context.delete(transaction)
+            try context.save()
+        }
+        let retry = AlertIngestionService(context: context, parser: parser)
+
+        let receipt = try await retry.retry(alertID: alert.id)
+
+        XCTAssertEqual(receipt.disposition, .needsReview)
+        XCTAssertNil(alert.transactionID)
+        XCTAssertEqual(alert.status, .needsReview)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+        let runs = try context.fetch(
+            FetchDescriptor<ExtractionRun>(sortBy: [SortDescriptor(\ExtractionRun.attemptIndex)])
+        )
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertEqual(runs.last?.safeResultCode, "owner_change_preserved")
+        XCTAssertEqual(runs.last?.terminalDisposition, .needsReview)
+        XCTAssertNil(runs.last?.acceptedTransactionID)
+    }
+
+    @MainActor
     func testRetryUpdatesExistingUneditedDraftWithoutCreatingDuplicate() async throws {
         let database = try AppDatabase(inMemory: true)
         let context = database.container.mainContext
@@ -552,6 +671,63 @@ final class AlertIngestionServiceTests: XCTestCase {
         let alert = try XCTUnwrap(context.fetch(FetchDescriptor<InboxAlert>()).first)
         XCTAssertEqual(alert.status, .pending)
         XCTAssertEqual(alert.lastErrorCode, "model_timed_out")
+    }
+
+    @MainActor
+    func testEraseAllInvalidatesInFlightGenerationBeforeItCanWriteAgain() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let parser = InspectingTransactionParser {
+            try LocalDataService(context: context).eraseAll()
+        }
+        let service = AlertIngestionService(context: context, parser: parser)
+
+        let receipt = try await service.ingest(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .manual
+        )
+
+        XCTAssertEqual(receipt.disposition, .processingIncomplete)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<InboxAlert>()).isEmpty)
+    }
+
+    @MainActor
+    func testEraseAllStopsPendingBatchFromProcessingStaleRemainingAlerts() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let parser = InspectingFirstResponseTransactionParser {
+            try LocalDataService(context: context).eraseAll()
+        }
+        let service = AlertIngestionService(context: context, parser: parser)
+        _ = try service.enqueue(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        _ = try service.enqueue(
+            body: TestFixtures.validBody + " Reference B.",
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+
+        let processed = await service.processPending()
+
+        XCTAssertEqual(processed, 1)
+        XCTAssertEqual(parser.invocationCount, 1)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<InboxAlert>()).isEmpty)
     }
 
     @MainActor
