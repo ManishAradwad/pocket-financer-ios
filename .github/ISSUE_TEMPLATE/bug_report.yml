@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a reproducible Pocket Financer problem using synthetic data only.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Pocket Financer. Never attach a real financial alert, phone number, account identifier, transaction screenshot, signing credential, exact model prompt/draft, or unredacted crash report.
+
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: Find this in Pocket Financer → Settings → About.
+      placeholder: 0.1.0 (1)
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and iOS version
+      placeholder: iPhone 16, iOS 27.0 beta
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Shortcuts ingestion
+        - On-device model
+        - Deterministic filtering
+        - Transactions and editing
+        - Persistence or erasure
+        - User interface
+        - Build or CI
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Use only a freshly written synthetic alert and privacy-safe error category.
+      placeholder: |
+        1. Open …
+        2. Enter the synthetic text …
+        3. Tap …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Do not paste raw alerts, prompts, parser drafts, or unredacted diagnostic reports.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I used synthetic data and removed every personal, financial, signing, and model-transcript value.
+          required: true

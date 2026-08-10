@@ -1,0 +1,406 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		000000000000000000000051 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000010;
+			remoteInfo = PocketFinancer;
+		};
+		000000000000000000000052 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000010;
+			remoteInfo = PocketFinancer;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		000000000000000000000020 /* Pocket Financer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Pocket Financer.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000021 /* PocketFinancerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PocketFinancerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000022 /* PocketFinancerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PocketFinancerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000070 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		000000000000000000000071 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		000000000000000000000072 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		000000000000000000000073 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Version.xcconfig; sourceTree = "<group>"; };
+		000000000000000000000074 /* App.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = App.xcconfig; sourceTree = "<group>"; };
+		000000000000000000000075 /* UnitTests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = UnitTests.xcconfig; sourceTree = "<group>"; };
+		000000000000000000000076 /* UITests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = UITests.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		000000000000000000000030 /* PocketFinancer */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PocketFinancer;
+			sourceTree = "<group>";
+		};
+		000000000000000000000031 /* PocketFinancerTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PocketFinancerTests;
+			sourceTree = "<group>";
+		};
+		000000000000000000000032 /* PocketFinancerUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PocketFinancerUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		000000000000000000000041 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000044 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000047 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		000000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000030 /* PocketFinancer */,
+				000000000000000000000031 /* PocketFinancerTests */,
+				000000000000000000000032 /* PocketFinancerUITests */,
+				000000000000000000000003 /* Config */,
+				000000000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		000000000000000000000003 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000074 /* App.xcconfig */,
+				000000000000000000000070 /* Debug.xcconfig */,
+				000000000000000000000071 /* Release.xcconfig */,
+				000000000000000000000072 /* Shared.xcconfig */,
+				000000000000000000000075 /* UnitTests.xcconfig */,
+				000000000000000000000076 /* UITests.xcconfig */,
+				000000000000000000000073 /* Version.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		000000000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000020 /* Pocket Financer.app */,
+				000000000000000000000021 /* PocketFinancerTests.xctest */,
+				000000000000000000000022 /* PocketFinancerUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		000000000000000000000010 /* PocketFinancer */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000080 /* Build configuration list for PBXNativeTarget "PocketFinancer" */;
+			buildPhases = (
+				000000000000000000000040 /* Sources */,
+				000000000000000000000041 /* Frameworks */,
+				000000000000000000000042 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				000000000000000000000030 /* PocketFinancer */,
+			);
+			name = PocketFinancer;
+			packageProductDependencies = (
+			);
+			productName = PocketFinancer;
+			productReference = 000000000000000000000020 /* Pocket Financer.app */;
+			productType = "com.apple.product-type.application";
+		};
+		000000000000000000000011 /* PocketFinancerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000081 /* Build configuration list for PBXNativeTarget "PocketFinancerTests" */;
+			buildPhases = (
+				000000000000000000000043 /* Sources */,
+				000000000000000000000044 /* Frameworks */,
+				000000000000000000000045 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				000000000000000000000053 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				000000000000000000000031 /* PocketFinancerTests */,
+			);
+			name = PocketFinancerTests;
+			packageProductDependencies = (
+			);
+			productName = PocketFinancerTests;
+			productReference = 000000000000000000000021 /* PocketFinancerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		000000000000000000000012 /* PocketFinancerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000082 /* Build configuration list for PBXNativeTarget "PocketFinancerUITests" */;
+			buildPhases = (
+				000000000000000000000046 /* Sources */,
+				000000000000000000000047 /* Frameworks */,
+				000000000000000000000048 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				000000000000000000000054 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				000000000000000000000032 /* PocketFinancerUITests */,
+			);
+			name = PocketFinancerUITests;
+			packageProductDependencies = (
+			);
+			productName = PocketFinancerUITests;
+			productReference = 000000000000000000000022 /* PocketFinancerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		000000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					000000000000000000000010 = {
+						CreatedOnToolsVersion = 26.0.1;
+					};
+					000000000000000000000011 = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 000000000000000000000010;
+					};
+					000000000000000000000012 = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 000000000000000000000010;
+					};
+				};
+			};
+			buildConfigurationList = 000000000000000000000083 /* Build configuration list for PBXProject "PocketFinancer" */;
+			developmentRegion = "en-US";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				"en-US",
+				Base,
+			);
+			mainGroup = 000000000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 000000000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				000000000000000000000010 /* PocketFinancer */,
+				000000000000000000000011 /* PocketFinancerTests */,
+				000000000000000000000012 /* PocketFinancerUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		000000000000000000000042 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000045 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000048 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		000000000000000000000040 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000043 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000046 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		000000000000000000000053 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000010 /* PocketFinancer */;
+			targetProxy = 000000000000000000000051 /* PBXContainerItemProxy */;
+		};
+		000000000000000000000054 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000010 /* PocketFinancer */;
+			targetProxy = 000000000000000000000052 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		000000000000000000000090 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000074 /* App.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_KEY_CFBundleDisplayName = "Pocket Financer";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+			};
+			name = Debug;
+		};
+		000000000000000000000091 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000074 /* App.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_KEY_CFBundleDisplayName = "Pocket Financer";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+			};
+			name = Release;
+		};
+		000000000000000000000092 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000075 /* UnitTests.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		000000000000000000000093 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000075 /* UnitTests.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		000000000000000000000094 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000076 /* UITests.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		000000000000000000000095 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000076 /* UITests.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		000000000000000000000096 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000070 /* Debug.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		000000000000000000000097 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000071 /* Release.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		000000000000000000000080 /* Build configuration list for PBXNativeTarget "PocketFinancer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000090 /* Debug */,
+				000000000000000000000091 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000081 /* Build configuration list for PBXNativeTarget "PocketFinancerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000092 /* Debug */,
+				000000000000000000000093 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000082 /* Build configuration list for PBXNativeTarget "PocketFinancerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000094 /* Debug */,
+				000000000000000000000095 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000083 /* Build configuration list for PBXProject "PocketFinancer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000096 /* Debug */,
+				000000000000000000000097 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 000000000000000000000001 /* Project object */;
+}
