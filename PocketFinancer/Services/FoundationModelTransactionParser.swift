@@ -40,16 +40,23 @@ struct FoundationModelTransactionParser: TransactionParsing {
         let underlyingError: any Error
     }
 
-    let parserName = FoundationModelExtractionContract.parserName
+    let parserName: String
     let requestMetadata: TransactionParserRequestMetadata
 
     private let model: SystemLanguageModel
     private let processingLocale: Locale
 
-    init(
+    nonisolated static func loadDefault() async -> FoundationModelTransactionParser {
+        await Task.detached(priority: .userInitiated) {
+            FoundationModelTransactionParser()
+        }.value
+    }
+
+    nonisolated init(
         processingLocale: Locale = FoundationModelExtractionContract.modelProcessingLocale,
         model: SystemLanguageModel = .default
     ) {
+        parserName = FoundationModelExtractionContract.parserName
         self.processingLocale = processingLocale
         self.model = model
         requestMetadata = TransactionParserRequestMetadata(

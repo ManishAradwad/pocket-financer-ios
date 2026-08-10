@@ -6,6 +6,13 @@ struct AppRootView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
 
+    private var mayDrainPendingAlerts: Bool {
+        PendingAlertDrainPolicy.mayDrain(
+            completedOnboarding: completedOnboarding,
+            scenePhase: scenePhase
+        )
+    }
+
     var body: some View {
         ZStack {
             Group {
@@ -23,12 +30,15 @@ struct AppRootView: View {
                     .zIndex(100)
             }
         }
-        .task {
+        .task(id: mayDrainPendingAlerts) {
+            guard mayDrainPendingAlerts else { return }
+
+            // Commit the active scene before model discovery or inbox work can
+            // occupy the main actor. Changing the task ID requests cancellation as
+            // soon as the owner leaves the active scene.
+            await Task.yield()
+            guard !Task.isCancelled, mayDrainPendingAlerts else { return }
             await drainPendingAlerts()
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            guard newPhase == .active, completedOnboarding else { return }
-            Task { await drainPendingAlerts() }
         }
     }
 
@@ -58,6 +68,13 @@ struct PrivacyShieldView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Pocket Financer is protected while inactive")
+        .accessibilityIdentifier("privacy-shield")
+    }
+}
+
+enum PendingAlertDrainPolicy {
+    static func mayDrain(completedOnboarding: Bool, scenePhase: ScenePhase) -> Bool {
+        completedOnboarding && scenePhase == .active
     }
 }
 

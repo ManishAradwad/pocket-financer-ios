@@ -23,6 +23,21 @@ final class PocketFinancerUITests: XCTestCase {
     }
 
     @MainActor
+    func testPrivacyShieldClearsOnLaunchAndReactivation() throws {
+        let app = launchResetApp()
+        let privacyShield = app.descendants(matching: .any)["privacy-shield"]
+        XCTAssertTrue(app.staticTexts["Your finances stay yours"].waitForExistence(timeout: 8))
+        XCTAssertTrue(privacyShield.waitForNonExistence(timeout: 2))
+
+        completeOnboarding(in: app)
+        XCUIDevice.shared.press(.home)
+        app.activate()
+
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(privacyShield.waitForNonExistence(timeout: 3))
+    }
+
+    @MainActor
     func testSettingsExposesPrivacyAndScopedErasure() throws {
         let app = launchResetApp()
         completeOnboarding(in: app)

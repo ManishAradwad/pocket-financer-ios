@@ -5,6 +5,147 @@ import XCTest
 
 final class AlertIngestionServiceTests: XCTestCase {
     @MainActor
+    func testDefaultParserFactoryIsLazyUntilAnEligibleAlertReachesModelWork() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let counter = ParserFactoryCallCounter()
+        let parser = FakeTransactionParser(result: .success(TestFixtures.validDraft))
+        let service = AlertIngestionService(
+            context: context,
+            parserFactory: {
+                await counter.recordCall()
+                return parser
+            }
+        )
+
+        let emptyProcessedCount = await service.processPending()
+        let emptyFactoryCallCount = await counter.callCount
+        XCTAssertEqual(emptyProcessedCount, 0)
+        XCTAssertEqual(emptyFactoryCallCount, 0)
+
+        _ = try service.enqueue(
+            body: "HDFC Bank: debit notice for a/c XXXXXX0000.",
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        let ineligibleProcessedCount = await service.processPending()
+        let ineligibleFactoryCallCount = await counter.callCount
+        XCTAssertEqual(ineligibleProcessedCount, 1)
+        XCTAssertEqual(ineligibleFactoryCallCount, 0)
+
+        _ = try service.enqueue(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt.addingTimeInterval(20),
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        let eligibleProcessedCount = await service.processPending()
+        let eligibleFactoryCallCount = await counter.callCount
+        XCTAssertEqual(eligibleProcessedCount, 1)
+        XCTAssertEqual(eligibleFactoryCallCount, 1)
+
+        _ = try service.enqueue(
+            body: "HDFC Bank: Rs.700.00 debited from a/c XXXXXX0000 on 05-08-2026 at Demo Store.",
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt.addingTimeInterval(40),
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        let secondEligibleProcessedCount = await service.processPending()
+        let cachedFactoryCallCount = await counter.callCount
+        XCTAssertEqual(secondEligibleProcessedCount, 1)
+        XCTAssertEqual(cachedFactoryCallCount, 1)
+    }
+
+    @MainActor
+    func testCancelledParserDiscoveryDoesNotBlockReplacementDrain() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let gate = ParserFactoryGate()
+        let staleParser = FakeTransactionParser(
+            parserName: "Cancelled Discovery Parser",
+            result: .success(TestFixtures.validDraft)
+        )
+        let staleService = AlertIngestionService(
+            context: context,
+            parserFactory: {
+                await gate.waitForRelease()
+                return staleParser
+            }
+        )
+        _ = try staleService.enqueue(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+
+        let staleDrain = Task { await staleService.processPending() }
+        await gate.waitUntilStarted()
+        staleDrain.cancel()
+
+        let replacementService = AlertIngestionService(
+            context: context,
+            parser: FakeTransactionParser(
+                parserName: "Replacement Parser",
+                result: .success(TestFixtures.validDraft)
+            )
+        )
+        let replacementProcessed = await replacementService.processPending()
+
+        XCTAssertEqual(replacementProcessed, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Transaction>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ExtractionRun>()).count, 1)
+        let alert = try XCTUnwrap(context.fetch(FetchDescriptor<InboxAlert>()).first)
+        XCTAssertEqual(alert.attemptCount, 1)
+        XCTAssertEqual(alert.parserName, "Replacement Parser")
+
+        await gate.release()
+        _ = await staleDrain.value
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Transaction>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ExtractionRun>()).count, 1)
+    }
+
+    @MainActor
+    func testCancellationDuringParserCannotCommitDraftOrTransaction() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let gate = ParserFactoryGate()
+        let service = AlertIngestionService(
+            context: context,
+            parser: CancellationIgnoringTransactionParser(gate: gate)
+        )
+        _ = try service.enqueue(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+
+        let processingTask = Task { await service.processPending() }
+        await gate.waitUntilStarted()
+        processingTask.cancel()
+        await gate.release()
+        _ = await processingTask.value
+
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
+        let alert = try XCTUnwrap(context.fetch(FetchDescriptor<InboxAlert>()).first)
+        XCTAssertEqual(alert.status, .pending)
+        XCTAssertEqual(alert.lastErrorCode, "model_cancelled")
+        let run = try XCTUnwrap(context.fetch(FetchDescriptor<ExtractionRun>()).first)
+        XCTAssertNil(run.parserDraft)
+        XCTAssertNil(run.acceptedTransactionID)
+        XCTAssertEqual(run.safeResultCode, "model_cancelled")
+        XCTAssertEqual(run.terminalDisposition, .queued)
+    }
+
+    @MainActor
     func testSuccessfulImportPersistsTransactionAccountAndRawEvidence() async throws {
         let database = try AppDatabase(inMemory: true)
         let context = database.container.mainContext
@@ -708,6 +849,98 @@ final class AlertIngestionServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testOwnerDeletionDuringParserDiscoveryIsNotRecreated() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let initial = AlertIngestionService(
+            context: context,
+            parser: FakeTransactionParser(result: .success(TestFixtures.reviewDraft))
+        )
+        _ = try await initial.ingest(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        let transaction = try XCTUnwrap(context.fetch(FetchDescriptor<Transaction>()).first)
+        let alert = try XCTUnwrap(context.fetch(FetchDescriptor<InboxAlert>()).first)
+        let initialAttemptCount = alert.attemptCount
+        let gate = ParserFactoryGate()
+        let parser = FakeTransactionParser(result: .success(TestFixtures.validDraft))
+        let retry = AlertIngestionService(
+            context: context,
+            parserFactory: {
+                await gate.waitForRelease()
+                return parser
+            }
+        )
+
+        let retryTask = Task { try await retry.retry(alertID: alert.id) }
+        await gate.waitUntilStarted()
+        alert.transactionID = nil
+        alert.status = .needsReview
+        alert.updatedAt = alert.updatedAt.addingTimeInterval(1)
+        context.delete(transaction)
+        try context.save()
+        await gate.release()
+
+        let receipt = try await retryTask.value
+        XCTAssertEqual(receipt.disposition, .needsReview)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+        XCTAssertEqual(alert.attemptCount, initialAttemptCount)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ExtractionRun>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<DeterministicFilterRun>()).count, 1)
+    }
+
+    @MainActor
+    func testOwnerEditDuringParserDiscoveryReturnsImportedWithoutModelAttempt() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let initial = AlertIngestionService(
+            context: context,
+            parser: FakeTransactionParser(result: .success(TestFixtures.reviewDraft))
+        )
+        _ = try await initial.ingest(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        let transaction = try XCTUnwrap(context.fetch(FetchDescriptor<Transaction>()).first)
+        let alert = try XCTUnwrap(context.fetch(FetchDescriptor<InboxAlert>()).first)
+        let initialAttemptCount = alert.attemptCount
+        let gate = ParserFactoryGate()
+        let parser = FakeTransactionParser(result: .success(TestFixtures.validDraft))
+        let retry = AlertIngestionService(
+            context: context,
+            parserFactory: {
+                await gate.waitForRelease()
+                return parser
+            }
+        )
+
+        let retryTask = Task { try await retry.retry(alertID: alert.id) }
+        await gate.waitUntilStarted()
+        transaction.merchant = "Owner correction"
+        transaction.isEdited = true
+        transaction.reviewState = .confirmed
+        transaction.updatedAt = transaction.updatedAt.addingTimeInterval(1)
+        alert.status = .imported
+        alert.updatedAt = alert.updatedAt.addingTimeInterval(1)
+        try context.save()
+        await gate.release()
+
+        let receipt = try await retryTask.value
+        XCTAssertEqual(receipt.disposition, .imported)
+        XCTAssertEqual(transaction.merchant, "Owner correction")
+        XCTAssertEqual(alert.attemptCount, initialAttemptCount)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ExtractionRun>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<DeterministicFilterRun>()).count, 1)
+    }
+
+    @MainActor
     func testRetryUpdatesExistingUneditedDraftWithoutCreatingDuplicate() async throws {
         let database = try AppDatabase(inMemory: true)
         let context = database.container.mainContext
@@ -895,6 +1128,42 @@ final class AlertIngestionServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testEraseAllDuringLazyParserLoadCannotRecreateEvidence() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let gate = ParserFactoryGate()
+        let parser = FakeTransactionParser(result: .success(TestFixtures.validDraft))
+        let service = AlertIngestionService(
+            context: context,
+            parserFactory: {
+                await gate.waitForRelease()
+                return parser
+            }
+        )
+        _ = try service.enqueue(
+            body: TestFixtures.validBody,
+            sender: "AX-HDFCBK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+
+        let processingTask = Task { await service.processPending() }
+        await gate.waitUntilStarted()
+        try LocalDataService(context: context).eraseAll()
+        await gate.release()
+
+        let processed = await processingTask.value
+        XCTAssertEqual(processed, 0)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DeterministicFilterRun>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<StructuredGenerationSnapshot>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<InboxAlert>()).isEmpty)
+    }
+
+    @MainActor
     func testEraseAllStopsPrefetchedPendingLoopFromRestartingAfterGeneration() async throws {
         let database = try AppDatabase(inMemory: true)
         let context = database.container.mainContext
@@ -937,5 +1206,55 @@ final class AlertIngestionServiceTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<InboxAlert>()).isEmpty)
+    }
+}
+
+private actor ParserFactoryCallCounter {
+    private(set) var callCount = 0
+
+    func recordCall() {
+        callCount += 1
+    }
+}
+
+private actor ParserFactoryGate {
+    private var didStart = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func waitForRelease() async {
+        didStart = true
+        for waiter in startWaiters {
+            waiter.resume()
+        }
+        startWaiters.removeAll()
+
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard !didStart else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+@MainActor
+private struct CancellationIgnoringTransactionParser: TransactionParsing {
+    let parserName = "Cancellation-Ignoring Test Parser"
+    let requestMetadata = TestFixtures.parserRequestMetadata
+    let gate: ParserFactoryGate
+
+    func parse(body: String, sender: String, receivedAt: Date) async throws -> ParsedAlertDraft {
+        await gate.waitForRelease()
+        return TestFixtures.validDraft
     }
 }
