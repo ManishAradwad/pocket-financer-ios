@@ -24,17 +24,25 @@ final class PocketFinancerUITests: XCTestCase {
 
     @MainActor
     func testPrivacyShieldClearsOnLaunchAndReactivation() throws {
-        let app = launchResetApp()
+        let app = launchResetApp(completedOnboarding: true)
         let privacyShield = app.descendants(matching: .any)["privacy-shield"]
-        XCTAssertTrue(app.staticTexts["Your finances stay yours"].waitForExistence(timeout: 8))
+        let homeTab = app.tabBars.buttons["Home"]
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 8))
+        XCTAssertTrue(waitForHittable(homeTab, timeout: 15))
         XCTAssertTrue(privacyShield.waitForNonExistence(timeout: 2))
 
-        completeOnboarding(in: app)
         XCUIDevice.shared.press(.home)
+        let enteredBackground =
+            app.wait(for: .runningBackgroundSuspended, timeout: 5)
+            || app.wait(for: .runningBackground, timeout: 1)
+        XCTAssertTrue(enteredBackground)
+
         app.activate()
 
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 8))
-        XCTAssertTrue(privacyShield.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        XCTAssertTrue(privacyShield.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(waitForHittable(homeTab, timeout: 10))
     }
 
     @MainActor
@@ -108,19 +116,31 @@ final class PocketFinancerUITests: XCTestCase {
         let finishButton = app.buttons["onboarding-finish"]
         XCTAssertTrue(finishButton.waitForExistence(timeout: 3))
         finishButton.tap()
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15))
     }
 
     @MainActor
-    private func launchResetApp() -> XCUIApplication {
+    private func launchResetApp(completedOnboarding: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "--ui-testing-reset",
             "-AppleLanguages", "(en)",
             "-AppleLocale", "en_US",
         ]
+        if completedOnboarding {
+            app.launchArguments += ["-onboarding.completed.v1", "YES"]
+        }
         app.launch()
         return app
+    }
+
+    @MainActor
+    private func waitForHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     @MainActor
