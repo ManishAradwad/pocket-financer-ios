@@ -51,7 +51,9 @@ final class AlertIngestionService {
     static let maximumSourceApplicationBytes = 256
 
     private let context: ModelContext
-    private let parser: any TransactionParsing
+    private var cachedParser: (any TransactionParsing)?
+    private var parserLoadTask: Task<any TransactionParsing, Never>?
+    private let parserFactory: @Sendable () async -> any TransactionParsing
     private let filter: AlertFilter
     private let validator: EvidenceValidator
     private let parserTimeout: Duration
@@ -67,19 +69,30 @@ final class AlertIngestionService {
         let epoch: UInt64
     }
 
+    private struct OwnerState: Equatable {
+        let alertUpdatedAt: Date
+        let transactionID: UUID?
+        let transactionUpdatedAt: Date?
+        let transactionWasEdited: Bool?
+    }
+
     private static var processingClaims: [UUID: ProcessingClaim] = [:]
     private static var processingEpoch: UInt64 = 0
 
     init(
         context: ModelContext,
-        parser: any TransactionParsing = FoundationModelTransactionParser(),
+        parser: (any TransactionParsing)? = nil,
+        parserFactory: @escaping @Sendable () async -> any TransactionParsing = {
+            await FoundationModelTransactionParser.loadDefault()
+        },
         filter: AlertFilter = AlertFilter(),
         validator: EvidenceValidator = EvidenceValidator(),
         parserTimeout: Duration = FoundationModelExtractionContract.timeout,
         contextSaver: @escaping @MainActor (ModelContext) throws -> Void = { try $0.save() }
     ) {
         self.context = context
-        self.parser = parser
+        cachedParser = parser
+        self.parserFactory = parserFactory
         self.filter = filter
         self.validator = validator
         self.parserTimeout = parserTimeout
@@ -236,16 +249,35 @@ final class AlertIngestionService {
 
     @discardableResult
     func processPending(limit: Int = 8, includeNeedsReview: Bool = false) async -> Int {
+        guard limit > 0 else { return 0 }
         let batchEpoch = Self.processingEpoch
-        let descriptor = FetchDescriptor<InboxAlert>(sortBy: [SortDescriptor(\InboxAlert.createdAt)])
+        let pendingStatus = AlertStatus.pending.rawValue
+        let processingStatus = AlertStatus.processing.rawValue
+        let predicate: Predicate<InboxAlert>
+        if includeNeedsReview {
+            let importedStatus = AlertStatus.imported.rawValue
+            let rejectedStatus = AlertStatus.rejected.rawValue
+            let duplicateStatus = AlertStatus.duplicate.rawValue
+            predicate = #Predicate { alert in
+                alert.statusRawValue != importedStatus
+                    && alert.statusRawValue != rejectedStatus
+                    && alert.statusRawValue != duplicateStatus
+                    && alert.rawBody != ""
+            }
+        } else {
+            predicate = #Predicate { alert in
+                (alert.statusRawValue == pendingStatus
+                    || alert.statusRawValue == processingStatus)
+                    && alert.rawBody != ""
+            }
+        }
+        var descriptor = FetchDescriptor<InboxAlert>(
+            predicate: predicate,
+            sortBy: [SortDescriptor(\InboxAlert.createdAt)]
+        )
+        descriptor.fetchLimit = limit
         guard let alerts = try? context.fetch(descriptor) else { return 0 }
-
-        let eligibleAlertIDs = alerts.filter { alert in
-            let retryable =
-                alert.status == .pending || alert.status == .processing
-                || (includeNeedsReview && alert.status == .needsReview)
-            return retryable && !alert.rawBody.isEmpty
-        }.prefix(limit).map(\.id)
+        let eligibleAlertIDs = alerts.map(\.id)
 
         var completed = 0
         for alertID in eligibleAlertIDs {
@@ -280,8 +312,48 @@ final class AlertIngestionService {
     ) async throws -> IngestionReceipt? {
         let alertID = alert.id
         guard
-            let currentAlert = try findAlert(id: alertID),
+            let preflightAlert = try findAlert(id: alertID),
             !Task.isCancelled,
+            Self.canProcess(
+                preflightAlert,
+                allowNeedsReview: allowBeyondAutomaticAttemptLimit
+            )
+        else { return nil }
+        let ownerStateAtEntry = try ownerState(for: preflightAlert)
+
+        var preparedParser: (any TransactionParsing)?
+        let isWithinAttemptLimit =
+            allowBeyondAutomaticAttemptLimit
+            || preflightAlert.attemptCount < Self.automaticAttemptLimit
+        if isWithinAttemptLimit,
+            filter.trace(sender: preflightAlert.sender, body: preflightAlert.rawBody).result.isEligible
+        {
+            // Parser discovery can be slow on a physical device. Do it before acquiring
+            // the per-alert claim so a cancelled scene task cannot block the replacement
+            // active-scene drain from retrying this durable alert.
+            preparedParser = await resolveParser()
+            guard !Task.isCancelled else {
+                return IngestionReceipt(alertID: alertID, disposition: .queued)
+            }
+        }
+
+        guard
+            let currentAlert = try findAlert(id: alertID),
+            !Task.isCancelled
+        else { return nil }
+        guard try ownerState(for: currentAlert) == ownerStateAtEntry else {
+            return IngestionReceipt(
+                alertID: alertID,
+                disposition: Self.currentDisposition(for: currentAlert)
+            )
+        }
+        guard
+            Self.canProcess(
+                currentAlert,
+                allowNeedsReview: allowBeyondAutomaticAttemptLimit
+            )
+        else { return nil }
+        guard
             let claim = Self.acquireClaim(
                 for: alertID,
                 expectedProcessingEpoch: expectedProcessingEpoch
@@ -301,15 +373,24 @@ final class AlertIngestionService {
 
         let filterTrace = filter.trace(sender: currentAlert.sender, body: currentAlert.rawBody)
         let filterResult = filterTrace.result
-        let filterRun = try makeFilterRun(trace: filterTrace, alertID: currentAlert.id)
-        context.insert(filterRun)
-
         switch filterResult.decision {
         case .eligible:
+            guard let preparedParser else {
+                return IngestionReceipt(alertID: currentAlert.id, disposition: .queued)
+            }
+            let filterRun = try makeFilterRun(trace: filterTrace, alertID: currentAlert.id)
+            context.insert(filterRun)
             // Commit the exact deterministic decision before model work starts.
             try save()
-            return try await process(currentAlert, claim: claim, filterRun: filterRun)
+            return try await process(
+                currentAlert,
+                parser: preparedParser,
+                claim: claim,
+                filterRun: filterRun
+            )
         case .rejectAndErase:
+            let filterRun = try makeFilterRun(trace: filterTrace, alertID: currentAlert.id)
+            context.insert(filterRun)
             reject(
                 currentAlert,
                 code: filterResult.rejectionCode?.rawValue ?? AlertRejectionCode.emptyBody.rawValue
@@ -317,6 +398,8 @@ final class AlertIngestionService {
             try save()
             return IngestionReceipt(alertID: currentAlert.id, disposition: .rejected)
         case .needsReview:
+            let filterRun = try makeFilterRun(trace: filterTrace, alertID: currentAlert.id)
+            context.insert(filterRun)
             currentAlert.status = .needsReview
             currentAlert.rejectionCode = nil
             currentAlert.lastErrorCode =
@@ -329,6 +412,7 @@ final class AlertIngestionService {
 
     private func process(
         _ alert: InboxAlert,
+        parser: any TransactionParsing,
         claim: ProcessingClaim,
         filterRun: DeterministicFilterRun
     ) async throws -> IngestionReceipt {
@@ -341,6 +425,7 @@ final class AlertIngestionService {
             try save()
             return IngestionReceipt(alertID: alert.id, disposition: .imported)
         }
+
         let transactionIDAtStart = transactionAtStart?.id
         let transactionUpdatedAtAtStart = transactionAtStart?.updatedAt
 
@@ -375,6 +460,7 @@ final class AlertIngestionService {
         let draft: ParsedAlertDraft
         do {
             draft = try await parseWithDeadline(
+                parser: parser,
                 body: alert.rawBody,
                 sender: alert.sender,
                 receivedAt: alert.receivedAt,
@@ -382,6 +468,9 @@ final class AlertIngestionService {
                 alertID: alertID,
                 claim: claim
             )
+            if Task.isCancelled {
+                throw TransactionParserError.cancelled
+            }
         } catch let error as TransactionParserError {
             guard Self.ownsClaim(for: alertID, claim: claim) else {
                 return IngestionReceipt(alertID: alertID, disposition: .processingIncomplete)
@@ -438,12 +527,16 @@ final class AlertIngestionService {
                 return preserved
             }
             let completedAt = Date.now
+            let safeCode =
+                Task.isCancelled
+                ? TransactionParserError.cancelled.safeCode
+                : "parser_failed"
             alert.status = .pending
-            alert.lastErrorCode = "parser_failed"
+            alert.lastErrorCode = safeCode
             alert.updatedAt = completedAt
             extractionRun.recordValidationNotPerformed()
             extractionRun.complete(
-                safeResultCode: "parser_failed",
+                safeResultCode: safeCode,
                 disposition: .queued,
                 at: completedAt
             )
@@ -549,7 +642,29 @@ final class AlertIngestionService {
         }
     }
 
+    private func resolveParser() async -> any TransactionParsing {
+        if let cachedParser {
+            return cachedParser
+        }
+
+        let loadTask: Task<any TransactionParsing, Never>
+        if let parserLoadTask {
+            loadTask = parserLoadTask
+        } else {
+            let parserFactory = self.parserFactory
+            let newLoadTask = Task { await parserFactory() }
+            parserLoadTask = newLoadTask
+            loadTask = newLoadTask
+        }
+
+        let parser = await loadTask.value
+        cachedParser = parser
+        parserLoadTask = nil
+        return parser
+    }
+
     private func parseWithDeadline(
+        parser: any TransactionParsing,
         body: String,
         sender: String,
         receivedAt: Date,
@@ -559,7 +674,7 @@ final class AlertIngestionService {
     ) async throws -> ParsedAlertDraft {
         try await withThrowingTaskGroup(of: ParsedAlertDraft.self) { group in
             group.addTask { [self] in
-                try await self.parser.parse(
+                try await parser.parse(
                     body: body,
                     sender: sender,
                     receivedAt: receivedAt
@@ -591,6 +706,7 @@ final class AlertIngestionService {
         alertID: UUID,
         claim: ProcessingClaim
     ) throws {
+        guard !Task.isCancelled else { throw TransactionParserError.cancelled }
         guard Self.ownsClaim(for: alertID, claim: claim) else { return }
         guard case .generationSnapshot(let snapshot) = parserProgress else { return }
 
@@ -673,8 +789,53 @@ final class AlertIngestionService {
     }
 
     private func findAlert(id: UUID) throws -> InboxAlert? {
-        let descriptor = FetchDescriptor<InboxAlert>()
-        return try context.fetch(descriptor).first { $0.id == id }
+        let targetID = id
+        var descriptor = FetchDescriptor<InboxAlert>(
+            predicate: #Predicate { alert in
+                alert.id == targetID
+            }
+        )
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first
+    }
+
+    private static func canProcess(
+        _ alert: InboxAlert,
+        allowNeedsReview: Bool
+    ) -> Bool {
+        switch alert.status {
+        case .pending, .processing:
+            true
+        case .needsReview:
+            allowNeedsReview
+        case .imported, .rejected, .duplicate:
+            false
+        }
+    }
+
+    private static func currentDisposition(for alert: InboxAlert) -> IngestionDisposition {
+        switch alert.status {
+        case .pending, .processing:
+            .queued
+        case .imported:
+            .imported
+        case .needsReview:
+            .needsReview
+        case .rejected:
+            .rejected
+        case .duplicate:
+            .duplicate
+        }
+    }
+
+    private func ownerState(for alert: InboxAlert) throws -> OwnerState {
+        let transaction = try findTransaction(for: alert)
+        return OwnerState(
+            alertUpdatedAt: alert.updatedAt,
+            transactionID: alert.transactionID,
+            transactionUpdatedAt: transaction?.updatedAt,
+            transactionWasEdited: transaction?.isEdited
+        )
     }
 
     private func findTransaction(for alert: InboxAlert) throws -> Transaction? {

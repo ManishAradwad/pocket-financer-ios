@@ -113,11 +113,17 @@ enum ModelSelfTestService {
     ]
 
     static func run(
-        parser: any TransactionParsing = FoundationModelTransactionParser(),
+        parser requestedParser: (any TransactionParsing)? = nil,
         timeout: Duration = timeout,
         receivedAt requestedReceivedAt: Date? = nil
     ) async -> ModelSelfTestResult {
         let startedAt = Date()
+        let parser: any TransactionParsing
+        if let requestedParser {
+            parser = requestedParser
+        } else {
+            parser = await FoundationModelTransactionParser.loadDefault()
+        }
         let receivedAt = requestedReceivedAt ?? startedAt
         let exactRequest = FoundationModelExtractionContract.requestPrompt(
             body: syntheticBody,

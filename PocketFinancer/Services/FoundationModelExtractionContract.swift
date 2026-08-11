@@ -6,7 +6,7 @@ import Foundation
 /// silently drift apart. The exact strings may be persisted only in a protected local
 /// `ExtractionRun` audit record. They must never enter logs, telemetry, exports, or reports.
 enum FoundationModelExtractionContract {
-    static let parserName = "Apple Foundation Models"
+    nonisolated static let parserName = "Apple Foundation Models"
     static let contractVersion = "foundation-transaction-extraction.v3"
     static let extractionProfileVersion = "3"
     static let timeout: Duration = .seconds(60)
