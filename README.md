@@ -15,20 +15,17 @@ Financial alerts, prompts, model output, and transactions are not sent to a Pock
 
 ## Current vertical slice
 
-- Native iOS 26 app using Swift 6, SwiftUI, SwiftData, App Intents, and Foundation Models.
-- `Import Transaction Alert` action for a personal Message automation.
-- Inbox-first persistence before filtering or inference, so interruption does not silently lose an eligible alert.
-- Sender-independent eligibility: the alert body, not a bank's variable sender format, determines admission.
-- Deterministic currency/account/verb checks plus OTP and collect-request rejection.
-- Sender-independent normalized-body duplicate protection within 15 seconds for overlapping `Rs`, `INR`, and `₹` automations.
-- Structured local model extraction with strict source-evidence validation and manual review on uncertainty.
-- Runtime validation of the app's U.S. English model-processing locale with `supportsLocale`, while `Locale.current` remains separate for India-region formatting; both identifiers are visible to the owner.
-- Owner-visible V4 processing history: exact deterministic filter decisions, cumulative structured-generation JSON snapshots, exact request/instructions, post-schema parser draft, per-field validation stages, timing, safe code, disposition, immutable accepted snapshot, and a separate owner-edited ledger.
-- A detailed, in-memory synthetic on-device model report, bounded retry, serialized model requests, and honest Apple API limits.
-- Dashboard, transactions, editing, manual import, queue diagnostics, privacy details, and confirmed local erasure.
-- File protection until first unlock, database backup exclusion, and an app-switcher privacy shield.
-- Fail-closed store startup: an unsupported pre-baseline, newer, protected, or otherwise unavailable store is preserved in place while UI and Shortcut imports pause; production never deletes it or substitutes an empty in-memory database.
-- Zero third-party package-resolution or runtime dependencies.
+Pocket Financer currently implements the complete path from a matching financial SMS to a reviewable local transaction:
+
+1. **Capture the alert:** You create a personal Message automation in Shortcuts and pass the message's `Content` to Pocket Financer's `Import Transaction Alert` action. Pocket Financer cannot browse your Messages inbox or import SMS history by itself.
+2. **Save it before doing anything else:** The Shortcut stores the full alert in protected on-device storage and returns immediately; it does not wait for Apple's model. If overlapping `Rs`, `INR`, and `₹` automations deliver the same message within 15 seconds, Pocket Financer keeps one copy.
+3. **Process saved alerts when the app is active:** After onboarding, opening or returning to Pocket Financer starts work on its waiting inbox. Local rules first reject clear OTPs and verification codes, collect or mandate requests, failed transactions, and standalone promotions. Their sensitive message bodies are erased. An alert that merely lacks a required transaction clue is kept for review instead of being discarded.
+4. **Extract transaction details on device:** Only eligible alerts go to Apple Foundation Models. The model proposes the direction, amount, merchant or counterparty, masked account or card reference, and date. The alert is not sent to a Pocket Financer server.
+5. **Check the proposal against the original SMS:** Model output is treated as a suggestion, not trusted data. Pocket Financer checks the transaction wording, requires one unambiguous amount, and verifies the amount, account, and any returned merchant or date text against the source alert. A transaction is written to the ledger only after these checks pass.
+6. **Keep uncertain work visible:** Retryable model failures remain queued. After three unsuccessful automatic attempts, an alert moves to Review Required and can still be retried manually. Unsafe or unsupported model output also remains available for review; a model-only rejection never erases the source evidence. A grounded result that is missing only an optional merchant or date can be saved for owner confirmation.
+7. **Review and correct the result:** Home shows this month's money in, money out, net cash flow, and recent activity. Transactions separates confirmed items from work that is waiting or needs review. You can inspect the original alert and processing history, correct and confirm a transaction, retry a saved alert, or manually import a synthetic test alert.
+8. **See how each attempt was handled:** Protected local history records the rules applied, the request sent to Apple's model, the structured JSON snapshots the app was allowed to observe, the extracted draft, field-by-field validation, timing, and the accepted transaction snapshot. Later edits remain separate from that history. Apple does not expose hidden reasoning, token-level internals, or numeric confidence through this API.
+9. **Keep the system local and recoverable:** The app has no analytics, ads, CloudKit transaction sync, Pocket Financer server, or third-party runtime dependency. Its database is excluded from backups, protected by iOS, and covered in the app switcher. If an existing store cannot be opened safely, Pocket Financer pauses access and preserves it for retry rather than deleting it or showing an empty replacement.
 
 ## How it works
 
