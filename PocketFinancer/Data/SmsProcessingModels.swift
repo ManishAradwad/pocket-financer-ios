@@ -322,8 +322,9 @@ final class SmsReviewCase {
 @Model
 final class SmsUserFeedbackEvent {
     @Attribute(.unique) var actionID: UUID
-    var reviewCaseID: UUID
-    var operationID: UUID
+    var reviewCaseID: UUID?
+    var operationID: UUID?
+    var transactionID: UUID?
     var transactionRevisionID: UUID?
     var expectedReviewRevision: Int
     var resultingReviewRevision: Int
@@ -339,8 +340,9 @@ final class SmsUserFeedbackEvent {
 
     init(
         actionID: UUID,
-        reviewCaseID: UUID,
-        operationID: UUID,
+        reviewCaseID: UUID?,
+        operationID: UUID?,
+        transactionID: UUID? = nil,
         transactionRevisionID: UUID?,
         expectedReviewRevision: Int,
         resultingReviewRevision: Int,
@@ -357,6 +359,7 @@ final class SmsUserFeedbackEvent {
         self.actionID = actionID
         self.reviewCaseID = reviewCaseID
         self.operationID = operationID
+        self.transactionID = transactionID
         self.transactionRevisionID = transactionRevisionID
         self.expectedReviewRevision = expectedReviewRevision
         self.resultingReviewRevision = resultingReviewRevision

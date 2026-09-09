@@ -12,6 +12,10 @@ struct AlertProcessingDetailView: View {
     @Query(sort: \DeterministicFilterRun.evaluatedAt, order: .reverse) private var allFilterRuns:
         [DeterministicFilterRun]
     @Query(sort: \Account.createdAt) private var accounts: [Account]
+    @Query(sort: \SmsProcessingOperation.createdAt, order: .reverse) private var allSmsOperations:
+        [SmsProcessingOperation]
+    @Query(sort: \SmsProcessingTraceEvent.sequence) private var allSmsTraceEvents: [SmsProcessingTraceEvent]
+    @Query(sort: \SmsReviewCase.updatedAt, order: .reverse) private var allSmsReviewCases: [SmsReviewCase]
 
     @State private var fetchedTransaction: Transaction?
     @State private var modelDiagnostic: ModelDiagnostic?
@@ -94,10 +98,24 @@ struct AlertProcessingDetailView: View {
             && (alert.status == .pending || alert.status == .processing || alert.status == .needsReview)
     }
 
+    private var nativeOperation: SmsProcessingOperation? {
+        allSmsOperations.first { $0.sourceAlertID == alert.id }
+    }
+
+    private var nativeTrace: [SmsProcessingTraceEvent] {
+        guard let operationID = nativeOperation?.id else { return [] }
+        return allSmsTraceEvents.filter { $0.operationID == operationID }.sorted { $0.sequence < $1.sequence }
+    }
+
+    private var nativeReviewCase: SmsReviewCase? {
+        allSmsReviewCases.first { $0.sourceAlertID == alert.id }
+    }
+
     var body: some View {
         List {
             outcomeSection
             reviewSection
+            nativeDecisionTraceSection
             pipelineSection
             deterministicFilterSection
             generationSection
@@ -125,6 +143,28 @@ struct AlertProcessingDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(resultMessage ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var nativeDecisionTraceSection: some View {
+        if nativeOperation != nil {
+            Section {
+                DecisionTraceTimeline(events: nativeTrace)
+                if let nativeReviewCase {
+                    NavigationLink {
+                        ReviewCorrectionView(reviewCase: nativeReviewCase)
+                    } label: {
+                        Label("Review, correct, retry, or reject", systemImage: "checklist")
+                    }
+                }
+            } header: {
+                Text("Decision Trace")
+            } footer: {
+                Text(
+                    "Stored native analyzer and direct-selector stages. Missing runtime metrics are not available, not zero."
+                )
+            }
         }
     }
 

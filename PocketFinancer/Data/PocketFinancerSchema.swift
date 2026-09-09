@@ -1,3 +1,4 @@
+import Foundation
 import SwiftData
 
 enum PocketFinancerSchemaV1: VersionedSchema {
@@ -48,6 +49,89 @@ enum PocketFinancerSchemaV4: VersionedSchema {
 enum PocketFinancerSchemaV5: VersionedSchema {
     static let versionIdentifier = Schema.Version(5, 0, 0)
 
+    /// Frozen V5 shape. Keep this nested historical model unchanged so a store
+    /// created by the first native-SMS schema remains recognizable.
+    @Model
+    final class SmsUserFeedbackEvent {
+        @Attribute(.unique) var actionID: UUID
+        var reviewCaseID: UUID
+        var operationID: UUID
+        var transactionRevisionID: UUID?
+        var expectedReviewRevision: Int
+        var resultingReviewRevision: Int
+        var actionRawValue: String
+        var actorClassRawValue: String
+        var correctionsJSON: String
+        var retryConfigurationRawValue: String?
+        var canonicalLabelID: String?
+        var canonicalLabelRevision: Int?
+        var previousEventHash: String?
+        var eventHash: String
+        var createdAt: Date
+
+        init(
+            actionID: UUID,
+            reviewCaseID: UUID,
+            operationID: UUID,
+            transactionRevisionID: UUID?,
+            expectedReviewRevision: Int,
+            resultingReviewRevision: Int,
+            action: String,
+            actorClass: String,
+            correctionsJSON: String,
+            retryConfiguration: String?,
+            canonicalLabelID: String? = nil,
+            canonicalLabelRevision: Int? = nil,
+            previousEventHash: String?,
+            eventHash: String,
+            createdAt: Date = .now
+        ) {
+            self.actionID = actionID
+            self.reviewCaseID = reviewCaseID
+            self.operationID = operationID
+            self.transactionRevisionID = transactionRevisionID
+            self.expectedReviewRevision = expectedReviewRevision
+            self.resultingReviewRevision = resultingReviewRevision
+            self.actionRawValue = action
+            self.actorClassRawValue = actorClass
+            self.correctionsJSON = correctionsJSON
+            self.retryConfigurationRawValue = retryConfiguration
+            self.canonicalLabelID = canonicalLabelID
+            self.canonicalLabelRevision = canonicalLabelRevision
+            self.previousEventHash = previousEventHash
+            self.eventHash = eventHash
+            self.createdAt = createdAt
+        }
+    }
+
+    static var models: [any PersistentModel.Type] {
+        [
+            InboxAlert.self,
+            Transaction.self,
+            Account.self,
+            ExtractionRun.self,
+            StructuredGenerationSnapshot.self,
+            DeterministicFilterRun.self,
+            SmsSourceMetadataEvent.self,
+            SmsProcessingOperation.self,
+            SmsProcessingAnalysis.self,
+            SmsSelectorAttempt.self,
+            SmsProcessingTraceEvent.self,
+            SmsReconstructedResult.self,
+            SmsPersistenceDecision.self,
+            SmsReviewCase.self,
+            PocketFinancerSchemaV5.SmsUserFeedbackEvent.self,
+            SmsTransactionRevision.self,
+            SmsAccountAlias.self,
+            SmsLegacyTransactionSnapshot.self,
+            SmsTraceImportReceipt.self,
+        ]
+    }
+}
+
+enum PocketFinancerSchemaV6: VersionedSchema {
+    static let versionIdentifier = Schema.Version(6, 0, 0)
+
     static var models: [any PersistentModel.Type] {
         [
             InboxAlert.self,
@@ -81,6 +165,7 @@ enum PocketFinancerMigrationPlan: SchemaMigrationPlan {
             PocketFinancerSchemaV3.self,
             PocketFinancerSchemaV4.self,
             PocketFinancerSchemaV5.self,
+            PocketFinancerSchemaV6.self,
         ]
     }
 
@@ -101,6 +186,10 @@ enum PocketFinancerMigrationPlan: SchemaMigrationPlan {
             .lightweight(
                 fromVersion: PocketFinancerSchemaV4.self,
                 toVersion: PocketFinancerSchemaV5.self
+            ),
+            .lightweight(
+                fromVersion: PocketFinancerSchemaV5.self,
+                toVersion: PocketFinancerSchemaV6.self
             ),
         ]
     }

@@ -168,7 +168,7 @@ final class AppDatabase {
     }
 
     nonisolated init(inMemory: Bool = false, storeURL explicitStoreURL: URL? = nil) throws {
-        let schema = Schema(versionedSchema: PocketFinancerSchemaV5.self)
+        let schema = Schema(versionedSchema: PocketFinancerSchemaV6.self)
 
         if inMemory {
             let configuration = ModelConfiguration(
@@ -252,5 +252,6 @@ final class AppDatabase {
     func prepareForProcessing() async throws {
         let store = SmsProcessingStore(modelContainer: container)
         try await store.backfillLegacyTransactions()
+        try await store.recoverExpiredOperations()
     }
 }

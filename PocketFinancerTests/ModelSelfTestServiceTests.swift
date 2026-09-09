@@ -2,179 +2,116 @@ import XCTest
 
 @testable import PocketFinancer
 
+@MainActor
 final class ModelSelfTestServiceTests: XCTestCase {
-    @MainActor
-    func testPassedReportCapturesExactContractInputDraftAndValidatedFields() async throws {
+    func testGroundedSelectorPassesThroughRealShadowCoordinator() async throws {
         let receivedAt = Date(timeIntervalSince1970: 1_785_955_200.125)
-        let draft = ParsedAlertDraft(
-            classification: .transaction,
-            direction: "debit",
-            amountText: "Rs.500.00",
-            merchant: "Demo Store",
-            accountLabel: "XXXXXX0000",
-            occurredAtText: "05-08-2026",
-            currencyCode: "INR"
-        )
-        let parser = VerifyingSelfTestParser(expectedReceivedAt: receivedAt, draft: draft)
 
         let result = await ModelSelfTestService.run(
-            parser: parser,
-            timeout: .seconds(1),
+            selector: GroundedSelfTestSelector(),
             receivedAt: receivedAt
         )
 
         XCTAssertTrue(result.passed)
         XCTAssertEqual(result.outcome, .passed)
-        XCTAssertEqual(result.parserName, parser.parserName)
-        XCTAssertEqual(result.contractVersion, FoundationModelExtractionContract.contractVersion)
-        XCTAssertEqual(result.profileVersion, FoundationModelExtractionContract.extractionProfileVersion)
-        XCTAssertEqual(result.localeIdentifier, parser.requestMetadata.localeIdentifier)
-        XCTAssertEqual(result.localeWasSupported, true)
-        XCTAssertEqual(result.supportedLanguageIdentifiers, ["en", "hi"])
-        XCTAssertEqual(result.requestDeadline, "1 second")
-        XCTAssertEqual(result.scheduling, FoundationModelExtractionContract.requestSchedulingDescription)
-        XCTAssertEqual(result.guardrails, FoundationModelExtractionContract.guardrailsDescription)
-        XCTAssertEqual(result.exactInstructions, FoundationModelExtractionContract.instructions)
-        XCTAssertEqual(
-            result.exactRequest,
-            FoundationModelExtractionContract.requestPrompt(
-                body: ModelSelfTestService.syntheticBody,
-                receivedAt: receivedAt
-            )
-        )
+        XCTAssertEqual(result.contractVersion, "pocketfinancer.grounded-candidate-selector-input/1")
+        XCTAssertEqual(result.generationMode, "DIRECT_NON_THINKING")
+        XCTAssertEqual(result.outputCompletion, "complete")
         XCTAssertEqual(result.syntheticBody, ModelSelfTestService.syntheticBody)
         XCTAssertEqual(result.syntheticSender, ModelSelfTestService.syntheticSender)
         XCTAssertEqual(result.receivedAt, receivedAt)
-        XCTAssertEqual(result.parserDraft, draft)
-        XCTAssertEqual(result.validationOutcome, .passed)
-        XCTAssertEqual(result.validationSafeCode, "validation_passed")
-        XCTAssertEqual(result.validatedDraft?.amountMinorUnits, 50_000)
-        XCTAssertEqual(result.validatedDraft?.currencyCode, "INR")
-        XCTAssertEqual(result.validatedDraft?.direction, .debit)
-        XCTAssertEqual(result.validatedDraft?.merchant, "Demo Store")
-        XCTAssertEqual(result.validatedDraft?.accountLabel, "XXXXXX0000")
+        XCTAssertEqual(result.settlement, "retained_for_review")
         XCTAssertNil(result.failure)
+        XCTAssertNotNil(result.analysisJSON)
+        XCTAssertTrue(result.exactRequest.contains("grounded-candidate-selector-input/1"))
+        XCTAssertTrue(result.exactOutput?.contains(#""decision":"posted""#) == true)
         XCTAssertGreaterThanOrEqual(result.completedAt, result.startedAt)
         XCTAssertGreaterThanOrEqual(result.elapsed, 0)
         XCTAssertEqual(result.apiLimitations, ModelSelfTestService.apiLimitations)
         XCTAssertTrue(result.apiLimitations.contains { $0.metric.localizedCaseInsensitiveContains("token") })
-        XCTAssertTrue(result.apiLimitations.contains { $0.metric.localizedCaseInsensitiveContains("context") })
         XCTAssertTrue(result.apiLimitations.contains { $0.metric.localizedCaseInsensitiveContains("reasoning") })
     }
 
-    @MainActor
-    func testEvidenceFailureRetainsExactParserDraftAndSafeCodeInMemory() async {
-        let draft = ParsedAlertDraft(
-            classification: .transaction,
-            direction: "debit",
-            amountText: "Rs.900.00",
-            merchant: "Demo Store",
-            accountLabel: "XXXXXX0000",
-            occurredAtText: "05-08-2026",
-            currencyCode: "INR"
-        )
-
+    func testUnavailableSelectorFailsClosedAndKeepsLedgerEmpty() async {
         let result = await ModelSelfTestService.run(
-            parser: FakeTransactionParser(result: .success(draft)),
-            timeout: .seconds(1),
+            selector: FailingSelfTestSelector(),
             receivedAt: TestFixtures.receivedAt
         )
 
         XCTAssertFalse(result.passed)
-        XCTAssertEqual(result.parserDraft, draft)
-        XCTAssertEqual(result.validationOutcome, .failed)
-        XCTAssertEqual(result.validationSafeCode, EvidenceValidationIssue.amountNotGrounded.rawValue)
-        XCTAssertNil(result.validatedDraft)
-        XCTAssertEqual(result.failure?.safeCode, EvidenceValidationIssue.amountNotGrounded.rawValue)
-        XCTAssertEqual(result.failure?.isRetryable, false)
-        XCTAssertTrue(result.summary.localizedCaseInsensitiveContains("validation rejected"))
-    }
-
-    @MainActor
-    func testParserFailureReportsSafeMappedErrorAndSkipsValidation() async {
-        let result = await ModelSelfTestService.run(
-            parser: FakeTransactionParser(result: .failure(.assetsUnavailable)),
-            timeout: .seconds(1),
-            receivedAt: TestFixtures.receivedAt
-        )
-
-        XCTAssertFalse(result.passed)
-        XCTAssertNil(result.parserDraft)
-        XCTAssertEqual(result.validationOutcome, .notRun)
-        XCTAssertEqual(result.validationSafeCode, "validation_not_run")
-        XCTAssertNil(result.validatedDraft)
-        XCTAssertEqual(result.failure?.safeCode, TransactionParserError.assetsUnavailable.safeCode)
+        XCTAssertEqual(result.outcome, .failed)
+        XCTAssertEqual(result.settlement, "retained_for_review")
+        XCTAssertEqual(result.outputCompletion, "failed")
+        XCTAssertNil(result.exactOutput)
+        XCTAssertEqual(result.failure?.safeCode, "runtime_unavailable")
         XCTAssertEqual(result.failure?.isRetryable, true)
-        XCTAssertTrue(result.failure?.ownerMessage.localizedCaseInsensitiveContains("assets") == true)
+        XCTAssertTrue(result.summary.localizedCaseInsensitiveContains("did not produce"))
     }
 
-    @MainActor
-    func testUnsupportedLocaleFailureNamesExactCheckedModelLocale() async {
-        let metadata = TransactionParserRequestMetadata(
-            localeIdentifier: "zz_IN",
-            localeWasSupported: false,
-            supportedLanguageIdentifiers: ["en", "hi"]
-        )
+    func testForeignCandidateOutputFailsClosed() async {
         let result = await ModelSelfTestService.run(
-            parser: FakeTransactionParser(
-                requestMetadata: metadata,
-                result: .failure(.unsupportedLanguageOrLocale)
-            ),
-            timeout: .seconds(1),
-            receivedAt: TestFixtures.receivedAt
-        )
-
-        XCTAssertEqual(result.localeIdentifier, "zz_IN")
-        XCTAssertEqual(result.localeWasSupported, false)
-        XCTAssertEqual(result.supportedLanguageIdentifiers, ["en", "hi"])
-        XCTAssertTrue(result.failure?.ownerMessage.contains("zz_IN") == true)
-        XCTAssertTrue(result.failure?.ownerMessage.contains("iPhone and Siri languages") == true)
-        XCTAssertTrue(result.failure?.ownerMessage.contains("region can remain India") == true)
-    }
-
-    @MainActor
-    func testModelNotReadyFailureStatesPublicLimitWithoutClaimingDownloadProgress() async {
-        let result = await ModelSelfTestService.run(
-            parser: FakeTransactionParser(result: .failure(.modelUnavailable(.modelNotReady))),
-            timeout: .seconds(1),
-            receivedAt: TestFixtures.receivedAt
-        )
-
-        XCTAssertEqual(result.failure?.safeCode, "model_modelNotReady")
-        XCTAssertTrue(result.failure?.ownerMessage.contains("modelNotReady") == true)
-        XCTAssertTrue(result.failure?.ownerMessage.contains("does not expose download progress") == true)
-    }
-
-    @MainActor
-    func testTimesOutWithStructuredReport() async {
-        let result = await ModelSelfTestService.run(
-            parser: SlowTransactionParser(),
-            timeout: .milliseconds(10),
+            selector: ForeignCandidateSelfTestSelector(),
             receivedAt: TestFixtures.receivedAt
         )
 
         XCTAssertFalse(result.passed)
-        XCTAssertEqual(result.requestDeadline, "0.010 seconds")
-        XCTAssertEqual(result.failure?.safeCode, TransactionParserError.timedOut.safeCode)
-        XCTAssertEqual(result.validationOutcome, .notRun)
-        XCTAssertTrue(result.message.localizedCaseInsensitiveContains("time limit"))
+        XCTAssertEqual(result.settlement, "retained_for_review")
+        XCTAssertEqual(result.failure?.safeCode, "selector_unknown_or_cross_message_candidate")
+        XCTAssertEqual(result.failure?.isRetryable, false)
     }
 }
 
-private struct VerifyingSelfTestParser: TransactionParsing {
-    let parserName = "Input-verifying test parser"
-    let requestMetadata = TestFixtures.parserRequestMetadata
-    let expectedReceivedAt: Date
-    let draft: ParsedAlertDraft
-
-    func parse(body: String, sender: String, receivedAt: Date) async throws -> ParsedAlertDraft {
-        guard
-            body == ModelSelfTestService.syntheticBody,
-            sender == ModelSelfTestService.syntheticSender,
-            receivedAt == expectedReceivedAt
-        else {
-            throw TransactionParserError.generationFailed
-        }
-        return draft
+private struct GroundedSelfTestSelector: DirectCandidateSelecting {
+    func select(source: String, analysis: SmsAnalysis) async throws -> DirectSelectorResponse {
+        let amount = try requiredCandidate(.amount, in: analysis)
+        let direction = try requiredCandidate(.direction, in: analysis)
+        let account = try requiredCandidate(.account, in: analysis)
+        let counterparty = try requiredCandidate(.counterparty, in: analysis)
+        let rawOutput =
+            #"{"account":"\#(account.id)","amount":"\#(amount.id)","counterparty":"\#(counterparty.id)","decision":"posted","direction":"\#(direction.id)"}"#
+        return DirectSelectorResponse(
+            rawOutput: rawOutput,
+            runtimeProfileJSON: #"{"generation_mode":"DIRECT_NON_THINKING"}"#,
+            requestJSON: try FoundationDirectCandidateSelector.requestJSON(
+                source: source,
+                analysis: analysis
+            ),
+            completion: "complete"
+        )
     }
+
+    private func requiredCandidate(
+        _ kind: SmsCandidateKind,
+        in analysis: SmsAnalysis
+    ) throws -> SmsCandidate {
+        guard let candidate = analysis.candidates.first(where: { $0.kind == kind }) else {
+            throw SelfTestSelectorError.missingCandidate
+        }
+        return candidate
+    }
+}
+
+private struct FailingSelfTestSelector: DirectCandidateSelecting {
+    func select(source _: String, analysis _: SmsAnalysis) async throws -> DirectSelectorResponse {
+        throw TransactionParserError.modelUnavailable(.modelNotReady)
+    }
+}
+
+private struct ForeignCandidateSelfTestSelector: DirectCandidateSelecting {
+    func select(source: String, analysis: SmsAnalysis) async throws -> DirectSelectorResponse {
+        DirectSelectorResponse(
+            rawOutput:
+                #"{"account":"foreign","amount":"foreign","counterparty":"foreign","decision":"posted","direction":"foreign"}"#,
+            runtimeProfileJSON: #"{"generation_mode":"DIRECT_NON_THINKING"}"#,
+            requestJSON: try FoundationDirectCandidateSelector.requestJSON(
+                source: source,
+                analysis: analysis
+            ),
+            completion: "complete"
+        )
+    }
+}
+
+private enum SelfTestSelectorError: Error {
+    case missingCandidate
 }

@@ -75,4 +75,59 @@ final class PocketFinancerV5MigrationTests: XCTestCase {
         XCTAssertFalse(snapshots.first?.originalEditHistoryKnown ?? true)
         XCTAssertEqual(revisions.first?.provenanceRawValue, "legacy_current_state_original_history_unknown")
     }
+
+    @MainActor
+    func testV5FeedbackMigratesToOptionalOperationAndTransactionReferences() throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: "PocketFinancerV6Migration-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        let storeURL = directoryURL.appending(path: "PocketFinancer.store")
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let actionID = UUID()
+        let reviewCaseID = UUID()
+        let operationID = UUID()
+
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: PocketFinancerSchemaV5.self)
+            let configuration = ModelConfiguration(
+                "PocketFinancerV5MigrationTest",
+                schema: schema,
+                url: storeURL,
+                allowsSave: true,
+                cloudKitDatabase: .none
+            )
+            let container = try ModelContainer(for: schema, configurations: configuration)
+            let context = container.mainContext
+            context.insert(
+                PocketFinancerSchemaV5.SmsUserFeedbackEvent(
+                    actionID: actionID,
+                    reviewCaseID: reviewCaseID,
+                    operationID: operationID,
+                    transactionRevisionID: nil,
+                    expectedReviewRevision: 0,
+                    resultingReviewRevision: 1,
+                    action: "rejected",
+                    actorClass: "user",
+                    correctionsJSON: "[]",
+                    retryConfiguration: nil,
+                    previousEventHash: nil,
+                    eventHash: "synthetic-v5-event-hash",
+                    createdAt: TestFixtures.receivedAt
+                )
+            )
+            try context.save()
+        }
+
+        let database = try AppDatabase(storeURL: storeURL)
+        Self.retainedStores.append((database, directoryURL))
+        let feedback = try database.container.mainContext.fetch(
+            FetchDescriptor<SmsUserFeedbackEvent>()
+        )
+
+        XCTAssertEqual(feedback.first?.actionID, actionID)
+        XCTAssertEqual(feedback.first?.reviewCaseID, reviewCaseID)
+        XCTAssertEqual(feedback.first?.operationID, operationID)
+        XCTAssertNil(feedback.first?.transactionID)
+    }
 }
