@@ -331,7 +331,8 @@ private struct TransactionEditView: View {
             )
             isSaving = true
             let container = modelContext.container
-            Task {
+            Task { @MainActor in
+                defer { isSaving = false }
                 do {
                     _ = try await SmsProcessingStore(modelContainer: container)
                         .editTransactionProjection(command)
@@ -340,7 +341,6 @@ private struct TransactionEditView: View {
                     errorMessage =
                         "The correction could not be saved. The previous transaction remains unchanged."
                 }
-                isSaving = false
             }
         } catch {
             errorMessage = "The source or revision history could not be loaded. No changes were saved."

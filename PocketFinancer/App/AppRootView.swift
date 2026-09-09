@@ -45,8 +45,9 @@ struct AppRootView: View {
     private func drainPendingAlerts() async {
         guard completedOnboarding, PrimaryCurrencySettings.confirmedCode != nil else { return }
         let service = AlertIngestionService(context: modelContext)
-        // Drain bounded database pages until no full page remains. Each operation
-        // is independently claimed/fenced and scene cancellation stops the loop.
+        // Process bounded batches until fewer than the requested limit complete.
+        // Each operation is independently claimed/fenced, and scene cancellation
+        // stops the loop.
         while true {
             guard !Task.isCancelled, scenePhase == .active else { return }
             let completed = await service.processPending(limit: 8)

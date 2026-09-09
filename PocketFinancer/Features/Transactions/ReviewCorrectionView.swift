@@ -63,8 +63,14 @@ struct ReviewCorrectionView: View {
         }
         .navigationTitle("Review alert")
         .onAppear(perform: loadDraft)
-        .alert("Could not save review", isPresented: .constant(errorMessage != nil)) {
-            Button("OK") { errorMessage = nil }
+        .alert(
+            "Could not save review",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
         }
@@ -122,7 +128,8 @@ struct ReviewCorrectionView: View {
             expectedRevision: reviewCase.revision, kind: kind,
             corrections: corrections, retryConfiguration: retry
         )
-        Task {
+        Task { @MainActor in
+            defer { saving = false }
             do {
                 let store = SmsProcessingStore(modelContainer: modelContext.container)
                 _ = try await store.resolveReview(command)
@@ -137,7 +144,6 @@ struct ReviewCorrectionView: View {
             } catch {
                 errorMessage = "The review changed or storage was unavailable. Reload and try again."
             }
-            saving = false
         }
     }
 
