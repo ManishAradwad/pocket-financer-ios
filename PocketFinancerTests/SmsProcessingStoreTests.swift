@@ -404,6 +404,117 @@ final class SmsProcessingStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testManualReviewCreatesTransactionAndAccountWithoutModelResult() async throws {
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let alert = InboxAlert(
+            sourceIdentity: "manual-review-source",
+            contentDigest: "manual-review-digest",
+            origin: .manual,
+            sourceApplication: "Tests",
+            sender: "SYNTH",
+            rawBody: "INR 100 was credited to account **1234 from SYNTH PAYER.",
+            receivedAt: TestFixtures.receivedAt
+        )
+        context.insert(alert)
+        try context.save()
+        let snapshot = try SmsOperationSnapshotFactory(context: context).create(
+            sourceAlertID: alert.id,
+            trigger: "test",
+            primaryCurrency: "INR",
+            enabledProfiles: ["core-en", "india"],
+            selectorModelIdentifier: "test-selector",
+            selectorRuntimeVersion: "test-runtime",
+            now: TestFixtures.receivedAt
+        )
+        let store = SmsProcessingStore(modelContainer: database.container)
+        let claim = try await store.claim(
+            operationID: snapshot.operationID,
+            now: TestFixtures.receivedAt
+        )
+        let reviewID = try await store.retainForReview(
+            claim,
+            reasons: ["selector_unknown_or_cross_message_candidate"],
+            now: TestFixtures.receivedAt
+        )
+
+        await xctAssertThrowsErrorAsync {
+            _ = try await store.resolveReview(
+                ReviewCommand(
+                    actionID: UUID(),
+                    reviewCaseID: reviewID,
+                    expectedRevision: 0,
+                    kind: .confirm,
+                    corrections: [],
+                    retryConfiguration: nil
+                ),
+                now: TestFixtures.receivedAt
+            )
+        } verify: { error in
+            XCTAssertEqual(error as? SmsProcessingStoreError, .invalidCommand)
+        }
+
+        let manualCorrection: (String, String) -> SmsFieldCorrection = { field, value in
+            SmsFieldCorrection(
+                field: field,
+                classification: .suppliedManualUngroundedValue,
+                previousRevisionID: nil,
+                candidateID: nil,
+                evidence: nil,
+                newValue: value
+            )
+        }
+        let command = ReviewCommand(
+            actionID: UUID(),
+            reviewCaseID: reviewID,
+            expectedRevision: 0,
+            kind: .correct,
+            corrections: [
+                manualCorrection("amount_minor_units", "10000"),
+                manualCorrection("currency", "INR"),
+                manualCorrection("direction", "credit"),
+                manualCorrection("counterparty", "Synthetic payer"),
+                manualCorrection(
+                    "occurred_at_epoch_ms",
+                    String(Int64(TestFixtures.receivedAt.timeIntervalSince1970 * 1_000))
+                ),
+                manualCorrection("new_account_name", "Synthetic account"),
+                manualCorrection("new_account_bank", "Synthetic bank"),
+                manualCorrection("new_account_kind", "account"),
+                manualCorrection("new_account_suffix", "1234"),
+            ],
+            retryConfiguration: nil
+        )
+
+        let receipt = try await store.resolveReview(command, now: TestFixtures.receivedAt)
+
+        XCTAssertEqual(receipt.resultingRevision, 1)
+        let verification = ModelContext(database.container)
+        let account = try XCTUnwrap(verification.fetch(FetchDescriptor<Account>()).first)
+        XCTAssertEqual(account.name, "Synthetic account")
+        XCTAssertEqual(account.bank, "Synthetic bank")
+        XCTAssertEqual(account.kind, .account)
+        XCTAssertEqual(account.suffix, "1234")
+        let transaction = try XCTUnwrap(
+            verification.fetch(FetchDescriptor<Transaction>()).first
+        )
+        XCTAssertEqual(transaction.amountMinorUnits, 10_000)
+        XCTAssertEqual(transaction.direction, .credit)
+        XCTAssertEqual(transaction.merchant, "Synthetic payer")
+        XCTAssertEqual(transaction.accountID, account.id)
+        XCTAssertEqual(transaction.parserName, "manual-review-entry")
+        XCTAssertEqual(transaction.amountEvidenceText, "")
+        let updatedAlert = try XCTUnwrap(
+            verification.fetch(FetchDescriptor<InboxAlert>()).first
+        )
+        XCTAssertEqual(updatedAlert.status, .imported)
+        let revision = try XCTUnwrap(
+            verification.fetch(FetchDescriptor<SmsTransactionRevision>()).first
+        )
+        XCTAssertEqual(revision.provenanceRawValue, "user_supplied_review_transaction")
+    }
+
+    @MainActor
     func testLaterLedgerEditAppendsLegacyBaselineFeedbackAndRevision() async throws {
         let database = try AppDatabase(inMemory: true)
         let context = database.container.mainContext

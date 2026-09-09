@@ -68,7 +68,10 @@ struct OnboardingView: View {
                             text: "Use a Message Contains text filter such as Rs. Do not add a Sender condition."
                         )
                         AutomationStep(
-                            number: 3, text: "Add Import Transaction Alert and connect the incoming message body.")
+                            number: 3,
+                            text:
+                                "Add Import Transaction Alert. Set Message Body to the incoming message’s Content property once; do not add a second Shortcut Input variable."
+                        )
                         AutomationStep(number: 4, text: "Choose automatic execution when iOS offers it.")
 
                         ShortcutsLink()

@@ -569,25 +569,33 @@ actor SmsProcessingStore {
         now: Date
     ) throws -> UUID {
         let operationID = review.currentOperationID
-        guard
-            let operation = try operation(id: operationID),
-            let storedResult = try modelContext.fetch(
-                FetchDescriptor<SmsReconstructedResult>(
-                    predicate: #Predicate { $0.operationID == operationID }
-                )
-            ).first,
-            let resultJSON = storedResult.semanticResultJSON,
-            let result = try? JSONDecoder().decode(
-                ReconstructedSmsTransaction.self, from: Data(resultJSON.utf8)
+        guard let operation = try operation(id: operationID) else {
+            throw SmsProcessingStoreError.invalidCommand
+        }
+        let storedResult = try modelContext.fetch(
+            FetchDescriptor<SmsReconstructedResult>(
+                predicate: #Predicate { $0.operationID == operationID }
             )
-        else { throw SmsProcessingStoreError.invalidCommand }
+        ).first
+        let result = storedResult?.semanticResultJSON.flatMap {
+            try? JSONDecoder().decode(
+                ReconstructedSmsTransaction.self, from: Data($0.utf8)
+            )
+        }
+        if command.kind == .confirm, result == nil {
+            throw SmsProcessingStoreError.invalidCommand
+        }
 
-        var amount = result.minorUnits
-        var currency = result.currency.uppercased()
-        var direction = result.direction
-        var merchant = result.counterpartyEvidence?.text ?? "Unspecified counterparty"
-        var accountID = try uniquelyResolvedAccountID(operationID: operationID)
-        var occurredAt = result.occurredAtEpochMilliseconds.map {
+        var amount = result?.minorUnits
+        var currency = result?.currency.uppercased()
+        var direction = result?.direction
+        var merchant = result.map { $0.counterpartyEvidence?.text ?? "Unspecified counterparty" }
+        var accountID = result == nil ? nil : try uniquelyResolvedAccountID(operationID: operationID)
+        var newAccountName: String?
+        var newAccountBank: String?
+        var newAccountKind: AccountKind?
+        var newAccountSuffix: String?
+        var occurredAt = result?.occurredAtEpochMilliseconds.map {
             Date(timeIntervalSince1970: TimeInterval($0) / 1_000)
         }
         for correction in command.corrections {
@@ -624,6 +632,25 @@ actor SmsProcessingStore {
                     ).first != nil
                 else { throw SmsProcessingStoreError.invalidCommand }
                 accountID = value
+            case "new_account_name":
+                let value = correction.newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !value.isEmpty else { throw SmsProcessingStoreError.invalidCommand }
+                newAccountName = value
+            case "new_account_bank":
+                let value = correction.newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                newAccountBank = value.isEmpty ? nil : value
+            case "new_account_kind":
+                guard let value = AccountKind(rawValue: correction.newValue) else {
+                    throw SmsProcessingStoreError.invalidCommand
+                }
+                newAccountKind = value
+            case "new_account_suffix":
+                let value = correction.newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard
+                    value.isEmpty
+                        || (value.count >= 2 && value.count <= 8 && value.allSatisfy(\.isNumber))
+                else { throw SmsProcessingStoreError.invalidCommand }
+                newAccountSuffix = value.isEmpty ? nil : value
             case "occurred_at_epoch_ms":
                 guard let value = Int64(correction.newValue), value >= 0 else {
                     throw SmsProcessingStoreError.invalidCommand
@@ -634,11 +661,31 @@ actor SmsProcessingStore {
             }
         }
         guard
+            let amount,
+            amount > 0,
+            let currency,
             let scale = CurrencyFormatter.supportedScales[currency],
-            let accountID,
             let occurredAt,
-            let transactionDirection = TransactionDirection(rawValue: direction)
+            let direction,
+            let transactionDirection = TransactionDirection(rawValue: direction),
+            let merchant,
+            !merchant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !(accountID != nil && newAccountName != nil)
         else { throw SmsProcessingStoreError.invalidCommand }
+
+        if accountID == nil {
+            guard let newAccountName else { throw SmsProcessingStoreError.invalidCommand }
+            let account = Account(
+                name: newAccountName,
+                bank: newAccountBank ?? newAccountName,
+                kind: newAccountKind ?? .unknown,
+                suffix: newAccountSuffix,
+                now: now
+            )
+            modelContext.insert(account)
+            accountID = account.id
+        }
+        guard let accountID else { throw SmsProcessingStoreError.invalidCommand }
 
         let sourceID = review.sourceAlertID
         guard
@@ -675,7 +722,13 @@ actor SmsProcessingStore {
             existing.updatedAt = now
             transaction = existing
         } else {
-            let amountEvidence = try amountEvidenceText(operationID: operationID, candidateID: result.amountCandidateID)
+            let amountEvidence =
+                try result.map {
+                    try amountEvidenceText(
+                        operationID: operationID,
+                        candidateID: $0.amountCandidateID
+                    )
+                } ?? ""
             transaction = Transaction(
                 amountMinorUnits: amount,
                 currencyCode: currency,
@@ -685,7 +738,7 @@ actor SmsProcessingStore {
                 accountID: accountID,
                 accountLabel: try accountName(id: accountID),
                 isEdited: command.kind == .correct,
-                parserName: "grounded-candidate-selector",
+                parserName: result == nil ? "manual-review-entry" : "grounded-candidate-selector",
                 reviewState: .confirmed,
                 sourceAlertID: sourceID,
                 amountEvidenceText: amountEvidence,
@@ -713,7 +766,10 @@ actor SmsProcessingStore {
             merchant: merchant,
             accountID: accountID,
             occurredAt: occurredAt,
-            provenance: command.kind == .confirm ? "user_confirmed_grounded_proposal" : "user_corrected_projection",
+            provenance:
+                command.kind == .confirm
+                ? "user_confirmed_grounded_proposal"
+                : result == nil ? "user_supplied_review_transaction" : "user_corrected_projection",
             isCurrentProjection: true,
             createdAt: now
         )

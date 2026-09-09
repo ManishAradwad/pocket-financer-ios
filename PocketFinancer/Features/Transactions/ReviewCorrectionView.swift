@@ -6,65 +6,136 @@ struct ReviewCorrectionView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Account.name) private var accounts: [Account]
+
     @State private var amount = ""
     @State private var merchant = ""
     @State private var currency = PrimaryCurrencySettings.currentCode
-    @State private var direction = TransactionDirection.debit
+    @State private var direction: TransactionDirection?
     @State private var accountID: UUID?
     @State private var occurredAt = Date.now
+    @State private var createNewAccount = false
+    @State private var newAccountName = ""
+    @State private var newAccountBank = ""
+    @State private var newAccountKind = AccountKind.account
+    @State private var newAccountSuffix = ""
+    @State private var groundedProposal: ReconstructedSmsTransaction?
+    @State private var groundedProposalAccountID: UUID?
     @State private var errorMessage: String?
     @State private var saving = false
 
     var body: some View {
         Form {
-            Section("Review state") {
-                LabeledContent(
-                    "Status", value: reviewCase.stateRawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                LabeledContent("Revision", value: "\(reviewCase.revision)")
-                ForEach(reviewCase.reasonCodesRawValue.split(separator: "\n"), id: \.self) {
-                    Text(String($0)).font(.caption.monospaced())
+            Section {
+                Label(outcomeTitle, systemImage: outcomeIcon)
+                    .font(.headline)
+                    .foregroundStyle(groundedProposal == nil ? .orange : .primary)
+                    .accessibilityIdentifier("review-outcome-title")
+                Text(outcomeDetail)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let groundedProposal {
+                Section("On-device proposal") {
+                    LabeledContent(
+                        "Amount",
+                        value: CurrencyFormatter.string(
+                            minorUnits: groundedProposal.minorUnits,
+                            currencyCode: groundedProposal.currency
+                        )
+                    )
+                    LabeledContent("Type", value: groundedProposal.direction.capitalized)
+                    LabeledContent(
+                        "Counterparty",
+                        value: groundedProposal.counterpartyEvidence?.text ?? "Not supplied"
+                    )
+                    if let accountName = groundedProposalAccountName {
+                        LabeledContent("Account", value: accountName)
+                    } else {
+                        Label(
+                            "Choose an account below before adding this transaction.",
+                            systemImage: "person.crop.circle.badge.questionmark"
+                        )
+                        .foregroundStyle(.secondary)
+                    }
+                    if canConfirmGroundedProposal {
+                        Button("Add proposed transaction") { resolve(.confirm) }
+                            .disabled(saving)
+                            .accessibilityIdentifier("review-confirm-proposal")
+                    }
                 }
             }
-            Section("Correction draft") {
-                TextField("Exact amount in minor units", text: $amount)
-                    .keyboardType(.numberPad)
+
+            Section(groundedProposal == nil ? "Enter transaction" : "Edit before adding") {
+                TextField("Amount", text: $amount)
+                    .keyboardType(.decimalPad)
+                    .accessibilityIdentifier("review-manual-amount")
                 Picker("Currency", selection: $currency) {
-                    ForEach(PrimaryCurrencySettings.supportedCodes, id: \.self) { Text($0).tag($0) }
+                    ForEach(PrimaryCurrencySettings.supportedCodes, id: \.self) {
+                        Text($0).tag($0)
+                    }
                 }
-                Picker("Direction", selection: $direction) {
+                Picker("Type", selection: $direction) {
+                    Text("Choose Credit or Debit").tag(TransactionDirection?.none)
                     ForEach(TransactionDirection.allCases) { value in
-                        Text(value.rawValue.capitalized).tag(value)
+                        Text(value.rawValue.capitalized).tag(Optional(value))
                     }
                 }
+                .accessibilityIdentifier("review-manual-direction")
                 TextField("Merchant or counterparty", text: $merchant)
-                Picker("Owned account", selection: $accountID) {
-                    Text("Select an account").tag(UUID?.none)
-                    ForEach(accounts) { account in
-                        Text(account.name).tag(Optional(account.id))
-                    }
-                }
+                    .accessibilityIdentifier("review-manual-counterparty")
                 DatePicker("Transaction time", selection: $occurredAt)
-                Text("Values entered here are explicitly marked as user-supplied, not model-grounded evidence.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                Text("Enter the amount normally—for example, 100.00—not in paise or other minor units.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            accountSection
+
+            Section {
+                Button(groundedProposal == nil ? "Add transaction manually" : "Add edited transaction") {
+                    resolve(.correct)
+                }
+                .disabled(!manualEntryIsValid || saving)
+                .accessibilityIdentifier("review-add-manual-transaction")
+
+                if let manualEntryProblem {
+                    Text(manualEntryProblem)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 Button("Save draft") { resolve(.saveDraft) }
                     .disabled(saving)
-                Button("Apply correction and add transaction") { resolve(.correct) }
-                    .disabled(
-                        saving || amount.isEmpty || merchant.isEmpty || accountID == nil
-                            || Int64(amount).map { $0 <= 0 } != false
-                    )
             }
-            Section("Actions") {
-                Button("Confirm grounded proposal") { resolve(.confirm) }
-                Button("Retry with original settings") { resolve(.retry, retry: "original") }
-                Button("Retry with current settings") { resolve(.retry, retry: "current") }
-                Button("Reject alert", role: .destructive) { resolve(.reject) }
+
+            Section("Other options") {
+                Button("Try on-device processing again") {
+                    resolve(.retry, retry: "current")
+                }
+                .disabled(saving)
+                Button("Retry with original settings") {
+                    resolve(.retry, retry: "original")
+                }
+                .disabled(saving)
+                Button("Ignore this alert", role: .destructive) { resolve(.reject) }
+                    .disabled(saving)
+            }
+
+            Section("Technical details") {
+                DisclosureGroup("Reason codes") {
+                    ForEach(reviewCase.reasonCodesRawValue.split(separator: "\n"), id: \.self) {
+                        Text(String($0))
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+                LabeledContent("Review revision", value: "\(reviewCase.revision)")
             }
         }
-        .navigationTitle("Review alert")
-        .onAppear(perform: loadDraft)
+        .navigationTitle(groundedProposal == nil ? "Add transaction" : "Review transaction")
+        .onAppear(perform: loadInitialState)
         .alert(
-            "Could not save review",
+            "Could not complete review",
             isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -76,57 +147,140 @@ struct ReviewCorrectionView: View {
         }
     }
 
-    private func resolve(_ kind: ReviewCommandKind, retry: String? = nil) {
-        saving = true
-        var corrections: [SmsFieldCorrection] = [
-            amount.isEmpty
-                ? nil
-                : SmsFieldCorrection(
-                    field: "amount_minor_units",
-                    classification: .suppliedManualUngroundedValue,
-                    previousRevisionID: nil, candidateID: nil, evidence: nil, newValue: amount
-                ),
-            merchant.isEmpty
-                ? nil
-                : SmsFieldCorrection(
-                    field: "counterparty",
-                    classification: .suppliedManualUngroundedValue,
-                    previousRevisionID: nil, candidateID: nil, evidence: nil, newValue: merchant
-                ),
-        ].compactMap { $0 }
-        if kind != .correct && kind != .saveDraft {
-            corrections = []
-        }
-        if kind == .correct || kind == .saveDraft {
-            corrections.append(contentsOf: [
-                SmsFieldCorrection(
-                    field: "currency", classification: .suppliedManualUngroundedValue,
-                    previousRevisionID: nil, candidateID: nil, evidence: nil, newValue: currency
-                ),
-                SmsFieldCorrection(
-                    field: "direction", classification: .suppliedManualUngroundedValue,
-                    previousRevisionID: nil, candidateID: nil, evidence: nil,
-                    newValue: direction.rawValue
-                ),
-                SmsFieldCorrection(
-                    field: "occurred_at_epoch_ms", classification: .suppliedManualUngroundedValue,
-                    previousRevisionID: nil, candidateID: nil, evidence: nil,
-                    newValue: String(Int64(occurredAt.timeIntervalSince1970 * 1_000))
-                ),
-            ])
-            if let accountID {
-                corrections.append(
-                    SmsFieldCorrection(
-                        field: "account_id", classification: .suppliedManualUngroundedValue,
-                        previousRevisionID: nil, candidateID: nil, evidence: nil,
-                        newValue: accountID.uuidString.lowercased()
-                    ))
+    @ViewBuilder
+    private var accountSection: some View {
+        Section("Account") {
+            if !accounts.isEmpty {
+                Toggle("Create a new account", isOn: $createNewAccount)
+                if !createNewAccount {
+                    Picker("Owned account", selection: $accountID) {
+                        Text("Select an account").tag(UUID?.none)
+                        ForEach(accounts) { account in
+                            Text(account.name).tag(Optional(account.id))
+                        }
+                    }
+                    .accessibilityIdentifier("review-existing-account")
+                }
+            } else {
+                Label(
+                    "Create your first account to identify where this transaction belongs.",
+                    systemImage: "building.columns"
+                )
+                .foregroundStyle(.secondary)
+            }
+
+            if accounts.isEmpty || createNewAccount {
+                TextField("Account name", text: $newAccountName)
+                    .accessibilityIdentifier("review-new-account-name")
+                TextField("Bank name (optional)", text: $newAccountBank)
+                Picker("Account type", selection: $newAccountKind) {
+                    ForEach(AccountKind.allCases) { kind in
+                        Text(kind.rawValue.capitalized).tag(kind)
+                    }
+                }
+                TextField("Last digits (optional)", text: $newAccountSuffix)
+                    .keyboardType(.numberPad)
+                Text("The account is created only when you add the transaction.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var outcomeTitle: String {
+        groundedProposal == nil
+            ? "The model result could not be verified"
+            : "Check the proposed transaction"
+    }
+
+    private var outcomeIcon: String {
+        groundedProposal == nil ? "exclamationmark.shield" : "checkmark.shield"
+    }
+
+    private var outcomeDetail: String {
+        if groundedProposal == nil {
+            return
+                "Nothing was added. Enter the transaction yourself below, try local processing again, or ignore this alert."
+        }
+        return "The on-device model produced a grounded proposal. Automatic saving is off, so you remain in control."
+    }
+
+    private var groundedProposalAccountName: String? {
+        guard let groundedProposalAccountID else { return nil }
+        return accounts.first { $0.id == groundedProposalAccountID }?.name
+    }
+
+    private var canConfirmGroundedProposal: Bool {
+        groundedProposal != nil && groundedProposalAccountName != nil
+    }
+
+    private var manualMinorUnits: Int64? {
+        CurrencyFormatter.minorUnits(
+            fromMajorUnitText: amount,
+            currencyCode: currency
+        )
+    }
+
+    private var manualAccountIsValid: Bool {
+        if accounts.isEmpty || createNewAccount {
+            let suffix = newAccountSuffix.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !newAccountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && (suffix.isEmpty
+                    || (suffix.count >= 2 && suffix.count <= 8 && suffix.allSatisfy(\.isNumber)))
+        }
+        return accountID != nil
+    }
+
+    private var manualEntryIsValid: Bool {
+        manualMinorUnits != nil
+            && direction != nil
+            && !merchant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && manualAccountIsValid
+    }
+
+    private var manualEntryProblem: String? {
+        var missing: [String] = []
+        if manualMinorUnits == nil { missing.append("a valid amount") }
+        if direction == nil { missing.append("Credit or Debit") }
+        if merchant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            missing.append("a merchant or counterparty")
+        }
+        if !manualAccountIsValid {
+            missing.append(accounts.isEmpty || createNewAccount ? "an account name" : "an account")
+        }
+        guard !missing.isEmpty else { return nil }
+        return "To add this transaction, provide " + missing.joined(separator: ", ") + "."
+    }
+
+    private func resolve(_ kind: ReviewCommandKind, retry: String? = nil) {
+        saving = true
+        let corrections: [SmsFieldCorrection]
+        if kind == .correct {
+            guard let minorUnits = manualMinorUnits, let direction else {
+                saving = false
+                return
+            }
+            corrections = manualCorrections(
+                amountField: "amount_minor_units",
+                amountValue: String(minorUnits),
+                direction: direction
+            )
+        } else if kind == .saveDraft {
+            corrections = manualCorrections(
+                amountField: "amount_major_units",
+                amountValue: amount,
+                direction: direction
+            )
+        } else {
+            corrections = []
+        }
         let command = ReviewCommand(
-            actionID: UUID(), reviewCaseID: reviewCase.id,
-            expectedRevision: reviewCase.revision, kind: kind,
-            corrections: corrections, retryConfiguration: retry
+            actionID: UUID(),
+            reviewCaseID: reviewCase.id,
+            expectedRevision: reviewCase.revision,
+            kind: kind,
+            corrections: corrections,
+            retryConfiguration: retry
         )
         Task { @MainActor in
             defer { saving = false }
@@ -141,10 +295,109 @@ struct ReviewCorrectionView: View {
                     )
                 }
                 dismiss()
+            } catch SmsProcessingStoreError.invalidCommand {
+                errorMessage =
+                    "The requested action is not available for this alert. Nothing was saved."
             } catch {
-                errorMessage = "The review changed or storage was unavailable. Reload and try again."
+                errorMessage =
+                    "The review changed or the local store was unavailable. Nothing was saved. Reopen the alert and try again."
             }
         }
+    }
+
+    private func manualCorrections(
+        amountField: String,
+        amountValue: String,
+        direction: TransactionDirection?
+    ) -> [SmsFieldCorrection] {
+        var corrections: [SmsFieldCorrection] = []
+        func append(_ field: String, _ value: String) {
+            corrections.append(
+                SmsFieldCorrection(
+                    field: field,
+                    classification: .suppliedManualUngroundedValue,
+                    previousRevisionID: nil,
+                    candidateID: nil,
+                    evidence: nil,
+                    newValue: value
+                )
+            )
+        }
+        if !amountValue.isEmpty { append(amountField, amountValue) }
+        append("currency", currency)
+        if let direction { append("direction", direction.rawValue) }
+        if !merchant.isEmpty { append("counterparty", merchant) }
+        append(
+            "occurred_at_epoch_ms",
+            String(Int64(occurredAt.timeIntervalSince1970 * 1_000))
+        )
+        if accounts.isEmpty || createNewAccount {
+            if !newAccountName.isEmpty { append("new_account_name", newAccountName) }
+            if !newAccountBank.isEmpty { append("new_account_bank", newAccountBank) }
+            append("new_account_kind", newAccountKind.rawValue)
+            if !newAccountSuffix.isEmpty { append("new_account_suffix", newAccountSuffix) }
+        } else if let accountID {
+            append("account_id", accountID.uuidString.lowercased())
+        }
+        return corrections
+    }
+
+    private func loadInitialState() {
+        createNewAccount = accounts.isEmpty
+        loadGroundedProposal()
+        loadDraft()
+    }
+
+    private func loadGroundedProposal() {
+        let operationID = reviewCase.currentOperationID
+        let sourceAlertID = reviewCase.sourceAlertID
+        if let stored = try? modelContext.fetch(
+            FetchDescriptor<SmsReconstructedResult>(
+                predicate: #Predicate { $0.operationID == operationID }
+            )
+        ).first,
+            let resultJSON = stored.semanticResultJSON,
+            let result = try? JSONDecoder().decode(
+                ReconstructedSmsTransaction.self,
+                from: Data(resultJSON.utf8)
+            )
+        {
+            groundedProposal = result
+            amount = CurrencyFormatter.editableMajorUnits(
+                minorUnits: result.minorUnits,
+                currencyCode: result.currency
+            )
+            currency = result.currency.uppercased()
+            direction = TransactionDirection(rawValue: result.direction)
+            merchant = result.counterpartyEvidence?.text ?? ""
+            if let milliseconds = result.occurredAtEpochMilliseconds {
+                occurredAt = Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+            }
+        } else if let alert = try? modelContext.fetch(
+            FetchDescriptor<InboxAlert>(
+                predicate: #Predicate { $0.id == sourceAlertID }
+            )
+        ).first {
+            occurredAt = alert.receivedAt
+        }
+
+        guard
+            let decision = try? modelContext.fetch(
+                FetchDescriptor<SmsPersistenceDecision>(
+                    predicate: #Predicate { $0.operationID == operationID }
+                )
+            ).first,
+            let object = try? JSONSerialization.jsonObject(
+                with: Data(decision.accountResolutionJSON.utf8)
+            ) as? [String: Any],
+            object["result"] as? String == "unique",
+            let rawID = object["account_id"] as? String,
+            let resolvedID = UUID(uuidString: rawID),
+            accounts.contains(where: { $0.id == resolvedID })
+        else { return }
+        groundedProposalAccountID = resolvedID
+        accountID = resolvedID
+        createNewAccount = false
     }
 
     private func loadDraft() {
@@ -155,22 +408,42 @@ struct ReviewCorrectionView: View {
                 from: Data(draftJSON.utf8)
             )
         else { return }
+        if let savedCurrency = corrections.first(where: { $0.field == "currency" })?.newValue,
+            PrimaryCurrencySettings.supportedCodes.contains(savedCurrency)
+        {
+            currency = savedCurrency
+        }
         for correction in corrections {
             switch correction.field {
-            case "amount_minor_units":
+            case "amount_major_units":
                 amount = correction.newValue
+            case "amount_minor_units":
+                if let value = Int64(correction.newValue) {
+                    amount = CurrencyFormatter.editableMajorUnits(
+                        minorUnits: value,
+                        currencyCode: currency
+                    )
+                }
             case "counterparty":
                 merchant = correction.newValue
             case "currency":
-                if PrimaryCurrencySettings.supportedCodes.contains(correction.newValue) {
-                    currency = correction.newValue
-                }
+                break
             case "direction":
-                if let parsed = TransactionDirection(rawValue: correction.newValue) {
-                    direction = parsed
-                }
+                direction = TransactionDirection(rawValue: correction.newValue)
             case "account_id":
                 accountID = UUID(uuidString: correction.newValue)
+                createNewAccount = false
+            case "new_account_name":
+                newAccountName = correction.newValue
+                createNewAccount = true
+            case "new_account_bank":
+                newAccountBank = correction.newValue
+            case "new_account_kind":
+                if let value = AccountKind(rawValue: correction.newValue) {
+                    newAccountKind = value
+                }
+            case "new_account_suffix":
+                newAccountSuffix = correction.newValue
             case "occurred_at_epoch_ms":
                 if let milliseconds = Int64(correction.newValue) {
                     occurredAt = Date(timeIntervalSince1970: Double(milliseconds) / 1_000)

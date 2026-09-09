@@ -16,6 +16,8 @@ struct AlertProcessingDetailView: View {
         [SmsProcessingOperation]
     @Query(sort: \SmsProcessingTraceEvent.sequence) private var allSmsTraceEvents: [SmsProcessingTraceEvent]
     @Query(sort: \SmsReviewCase.updatedAt, order: .reverse) private var allSmsReviewCases: [SmsReviewCase]
+    @Query(sort: \SmsSelectorAttempt.startedAt, order: .reverse) private var allSmsSelectorAttempts:
+        [SmsSelectorAttempt]
 
     @State private var fetchedTransaction: Transaction?
     @State private var modelDiagnostic: ModelDiagnostic?
@@ -109,6 +111,11 @@ struct AlertProcessingDetailView: View {
 
     private var nativeReviewCase: SmsReviewCase? {
         allSmsReviewCases.first { $0.sourceAlertID == alert.id }
+    }
+
+    private var nativeSelectorAttempt: SmsSelectorAttempt? {
+        guard let operationID = nativeOperation?.id else { return nil }
+        return allSmsSelectorAttempts.first { $0.operationID == operationID }
     }
 
     var body: some View {
@@ -593,36 +600,49 @@ struct AlertProcessingDetailView: View {
                 .padding(.vertical, 8)
             }
 
-            DisclosureGroup("Current extraction contract") {
-                VStack(alignment: .leading, spacing: 10) {
-                    TraceValue("Contract version", FoundationModelExtractionContract.contractVersion)
-                    TraceValue("Profile version", FoundationModelExtractionContract.extractionProfileVersion)
-                    TraceValue("Timeout", FoundationModelExtractionContract.timeoutDescription)
-                    TraceValue("Scheduling", FoundationModelExtractionContract.requestSchedulingDescription)
-                    TraceValue(
-                        "Generation options",
-                        FoundationModelExtractionContract.generationOptionsDescription
-                    )
-                    TraceValue("Guardrails", FoundationModelExtractionContract.guardrailsDescription)
-                    Text("Instructions")
-                        .font(.caption.weight(.semibold))
-                    Text(FoundationModelExtractionContract.instructions)
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
-                    if !alert.rawBody.isEmpty {
-                        Text("Request preview for the current app version")
+            if nativeOperation != nil {
+                DisclosureGroup("Current Candidate Selector") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TraceValue("Generation mode", "Direct, non-thinking")
+                        TraceValue("Decoding", "Greedy")
+                        Text("Pinned instructions")
                             .font(.caption.weight(.semibold))
-                        Text(
-                            FoundationModelExtractionContract.requestPrompt(
-                                body: alert.rawBody,
-                                receivedAt: alert.receivedAt
+                        Text(FoundationDirectCandidateSelector.selectorInstructions)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                        if let nativeSelectorAttempt {
+                            TraceValue("Completion", nativeSelectorAttempt.completionRawValue)
+                            TraceValue(
+                                "Validation result",
+                                nativeSelectorAttempt.safeErrorCode ?? "Validated"
                             )
-                        )
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
+                            Text("Exact stored request")
+                                .font(.caption.weight(.semibold))
+                            Text(nativeSelectorAttempt.requestJSON)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                            if let rawOutput = nativeSelectorAttempt.rawOutput {
+                                Text("Exact stored response")
+                                    .font(.caption.weight(.semibold))
+                                Text(rawOutput)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                            }
+                        } else {
+                            Text("No Candidate Selector attempt was recorded for this operation.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    .padding(.vertical, 8)
                 }
-                .padding(.vertical, 8)
+            } else {
+                DisclosureGroup("Legacy extraction contract") {
+                    Text(
+                        "This alert predates the native Candidate Selector. Its historical extraction details remain in Attempt history."
+                    )
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+                }
             }
 
             DisclosureGroup("What Apple does not expose") {

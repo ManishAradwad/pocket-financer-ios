@@ -229,7 +229,7 @@ struct AutomationSetupView: View {
                 AutomationStep(
                     number: 5,
                     text:
-                        "Tap the blue Message Body slot, choose Shortcut Input, then choose its Content property. Leave Sender and Received At empty."
+                        "Clear the Message Body slot, then insert the Shortcut Input variable and select its Content property. The final slot may display Shortcut Input and Content together as one property-qualified variable; do not insert either variable a second time. Leave Sender and Received At empty."
                 )
                 AutomationStep(
                     number: 6,
