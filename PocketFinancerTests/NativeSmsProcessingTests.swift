@@ -18,6 +18,30 @@ private struct FixedDirectSelector: DirectCandidateSelecting {
 
 @MainActor
 final class NativeSmsProcessingTests: XCTestCase {
+    func testCurrentSelectorConfigurationHasNoWallClockDeadline() {
+        let configuration = SmsOperationConfiguration(
+            operationID: UUID(),
+            sourceID: UUID(),
+            trigger: "diagnostic",
+            createdAt: TestFixtures.receivedAt,
+            primaryCurrency: "INR",
+            enabledProfiles: ["core-en", "india"],
+            sourceTimestamp: TestFixtures.receivedAt,
+            sourceTimestampProvenance: "acquisition_supplied_message_time",
+            admissionTimestamp: TestFixtures.receivedAt,
+            timezoneIdentifier: "UTC",
+            selectorModelIdentifier: "test-selector",
+            selectorRuntimeVersion: "test-runtime"
+        )
+
+        XCTAssertEqual(configuration.contract, "pocketfinancer.processing-config/2")
+        XCTAssertEqual(configuration.releaseID, "native-integration-v2")
+        XCTAssertEqual(
+            configuration.validationProfile,
+            "pocketfinancer.selector-validation-profile/3"
+        )
+        XCTAssertEqual(configuration.parserDeadlineMilliseconds, 0)
+    }
     func testPrimaryCurrencyRequiresExplicitConfirmation() {
         let defaults = UserDefaults.standard
         let previousCode = defaults.object(forKey: PrimaryCurrencySettings.key)

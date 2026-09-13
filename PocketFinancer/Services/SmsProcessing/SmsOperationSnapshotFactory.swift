@@ -114,7 +114,7 @@ struct SmsOperationSnapshotFactory {
         var expected: [(name: String, ext: String, hash: String)] = [
             (
                 "manifest", "json",
-                "e07ac6d2f6e90fac914db824d104141a20e49fc40f8b8f02c8fec4c0614e680a"
+                "637013f0988a20eb070e10b07f68ddf9172b847262024a50676c90022234019d"
             ),
             (
                 "currency-v1", "json",

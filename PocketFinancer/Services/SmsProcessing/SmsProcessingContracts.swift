@@ -8,7 +8,7 @@ struct AdmittedMessageRef: Codable, Equatable, Sendable {
 }
 
 nonisolated struct SmsOperationConfiguration: Codable, Equatable, Sendable {
-    static let releaseID = "native-integration-v1"
+    static let releaseID = "native-integration-v2"
 
     let contract: String
     let releaseID: String
@@ -56,7 +56,7 @@ nonisolated struct SmsOperationConfiguration: Codable, Equatable, Sendable {
         selectorModelIdentifier: String,
         selectorRuntimeVersion: String
     ) {
-        contract = "pocketfinancer.processing-config/1"
+        contract = "pocketfinancer.processing-config/2"
         releaseID = Self.releaseID
         self.operationID = operationID
         self.parentOperationID = parentOperationID
@@ -70,7 +70,7 @@ nonisolated struct SmsOperationConfiguration: Codable, Equatable, Sendable {
         self.sourceTimestampProvenance = sourceTimestampProvenance
         admissionTimestampEpochMilliseconds = admissionTimestamp.epochMilliseconds
         self.timezoneIdentifier = timezoneIdentifier
-        releaseManifestHash = "e07ac6d2f6e90fac914db824d104141a20e49fc40f8b8f02c8fec4c0614e680a"
+        releaseManifestHash = "637013f0988a20eb070e10b07f68ddf9172b847262024a50676c90022234019d"
         currencyAssetHash = "cb5d991a5ade283f6b2406e4427a2fd1bf5468f67ab6f573f6eb97b4c5919c78"
         profileAssetHashes = Dictionary(
             uniqueKeysWithValues: enabledProfiles.map { profile in
@@ -88,14 +88,14 @@ nonisolated struct SmsOperationConfiguration: Codable, Equatable, Sendable {
         self.selectorModelIdentifier = selectorModelIdentifier
         self.selectorRuntimeVersion = selectorRuntimeVersion
         promptVersion = "pocketfinancer.selector-prompt/1"
-        validationProfile = "pocketfinancer.selector-validation-profile/2"
+        validationProfile = "pocketfinancer.selector-validation-profile/3"
         persistencePolicy = "pocketfinancer.persistence-policy/1"
         rolloutMode = "shadow"
         generationMode = "DIRECT_NON_THINKING"
         decoding = "greedy"
         answerTokenLimit = 512
         rawOutputByteLimit = 16_384
-        parserDeadlineMilliseconds = 60_000
+        parserDeadlineMilliseconds = 0
     }
 
     var canonicalJSON: String {

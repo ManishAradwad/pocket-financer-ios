@@ -41,13 +41,13 @@ actor DefaultSmsProcessingCoordinator: SmsProcessingCoordinating {
             operation.parentOperationID == operation.configuration.parentOperationID,
             CanonicalJSON.sha256(source.sourceID.uuidString.lowercased())
                 == operation.configuration.sourceReferenceHash,
-            operation.configuration.contract == "pocketfinancer.processing-config/1",
+            operation.configuration.contract == "pocketfinancer.processing-config/2",
             operation.configuration.releaseID == SmsOperationConfiguration.releaseID,
             operation.configuration.generationMode == "DIRECT_NON_THINKING",
             operation.configuration.decoding == "greedy",
             operation.configuration.answerTokenLimit == 512,
             operation.configuration.rawOutputByteLimit == 16_384,
-            operation.configuration.parserDeadlineMilliseconds == 60_000,
+            operation.configuration.parserDeadlineMilliseconds == 0,
             ["shadow", "review_only"].contains(operation.configuration.rolloutMode),
             operation.operationID == operation.configuration.operationID,
             (try? operation.configuration.sha256) == operation.configurationHash,
@@ -118,11 +118,7 @@ actor DefaultSmsProcessingCoordinator: SmsProcessingCoordinating {
             let startedAt = Date.now
             let response: DirectSelectorResponse
             do {
-                response = try await runSelectorWithDeadline(
-                    source: evidence.body,
-                    analysis: analysis,
-                    deadline: .seconds(60)
-                )
+                response = try await selector.select(source: evidence.body, analysis: analysis)
             } catch is CancellationError {
                 let receipt = try await store.stop(operationID: operation.operationID)
                 return .stopped(
@@ -131,9 +127,7 @@ actor DefaultSmsProcessingCoordinator: SmsProcessingCoordinating {
                     reason: "operation_interrupted"
                 )
             } catch {
-                let safeCode =
-                    (error as? TransactionParserError) == .timedOut
-                    ? "runtime_timeout" : "runtime_unavailable"
+                let safeCode = "runtime_unavailable"
                 try await store.recordSelectorFailure(
                     operationID: operation.operationID,
                     runtimeProfileJSON: "{}", requestJSON: "{}",
@@ -241,42 +235,6 @@ actor DefaultSmsProcessingCoordinator: SmsProcessingCoordinating {
         try await store.resolveReview(command)
     }
 
-    private func runSelectorWithDeadline(
-        source: String,
-        analysis: SmsAnalysis,
-        deadline: Duration
-    ) async throws -> DirectSelectorResponse {
-        let race = DirectSelectorRace()
-        let selector = self.selector
-        let selectorTask = Task {
-            do {
-                let response = try await selector.select(source: source, analysis: analysis)
-                await race.resolve(.success(response))
-            } catch {
-                await race.resolve(.failure(error))
-            }
-        }
-        let timeoutTask = Task {
-            do {
-                try await Task.sleep(for: deadline)
-                await race.resolve(.failure(TransactionParserError.timedOut))
-            } catch {
-                // Another terminal result won the race.
-            }
-        }
-        defer {
-            selectorTask.cancel()
-            timeoutTask.cancel()
-        }
-        return try await withTaskCancellationHandler {
-            try await race.value()
-        } onCancel: {
-            selectorTask.cancel()
-            timeoutTask.cancel()
-            Task { await race.resolve(.failure(CancellationError())) }
-        }
-    }
-
     private func trace(
         _ claim: inout SmsOperationClaim,
         _ stage: String,
@@ -317,26 +275,5 @@ actor DefaultSmsProcessingCoordinator: SmsProcessingCoordinating {
             operationID: operationID, reviewCaseID: nil,
             reason: reasons.first ?? "operation_interrupted"
         )
-    }
-}
-
-private actor DirectSelectorRace {
-    private var result: Result<DirectSelectorResponse, any Error>?
-    private var continuation: CheckedContinuation<DirectSelectorResponse, any Error>?
-
-    func value() async throws -> DirectSelectorResponse {
-        if let result {
-            return try result.get()
-        }
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-        }
-    }
-
-    func resolve(_ result: Result<DirectSelectorResponse, any Error>) {
-        guard self.result == nil else { return }
-        self.result = result
-        continuation?.resume(with: result)
-        continuation = nil
     }
 }

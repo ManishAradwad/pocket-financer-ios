@@ -78,7 +78,7 @@ struct FoundationDirectCandidateSelector: DirectCandidateSelecting {
     }
 
     private nonisolated static let runtimeProfileJSON =
-        #"{"generation_mode":"DIRECT_NON_THINKING","decoding":"greedy","answer_token_limit":512,"raw_output_utf8_byte_limit":16384,"deadline_ms":60000,"runtime":"Apple Foundation Models"}"#
+        #"{"generation_mode":"DIRECT_NON_THINKING","decoding":"greedy","answer_token_limit":512,"raw_output_utf8_byte_limit":16384,"deadline_ms":0,"runtime":"Apple Foundation Models"}"#
 
     nonisolated static func requestJSON(source: String, analysis: SmsAnalysis) throws -> String {
         let candidates: [[String: Any]] = analysis.candidates.map { candidate in
