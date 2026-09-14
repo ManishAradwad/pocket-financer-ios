@@ -18,6 +18,31 @@ private struct FixedDirectSelector: DirectCandidateSelecting {
 
 @MainActor
 final class NativeSmsProcessingTests: XCTestCase {
+    func testNativeSmsV3BundleRetainsManifestPathsAndBytes() throws {
+        let binding = try NativeSmsV3Assets.verify()
+
+        XCTAssertEqual(binding.releaseID, NativeSmsV3Assets.releaseID)
+        XCTAssertEqual(binding.manifestSHA256, NativeSmsV3Assets.manifestSHA256)
+        XCTAssertEqual(
+            NativeSmsV3AssetIntegrityError.reasonCode,
+            "configuration_integrity"
+        )
+        XCTAssertEqual(
+            binding.artifactsByContract.count,
+            NativeSmsV3Assets.expectedArtifactCount
+        )
+        XCTAssertEqual(
+            binding.artifactsByContract["pocketfinancer.sms-extractor/1"]?.path,
+            "configs/sms_processing/contracts/v3/sms-extractor.schema.json"
+        )
+        XCTAssertEqual(
+            binding.artifactsByContract[
+                "pocketfinancer.sanitized-extractor-golden/1"
+            ]?.path,
+            "tests/sms_processing/golden/extractor-v1/sanitized-vectors.json"
+        )
+    }
+
     func testCurrentSelectorConfigurationHasNoWallClockDeadline() {
         let configuration = SmsOperationConfiguration(
             operationID: UUID(),
