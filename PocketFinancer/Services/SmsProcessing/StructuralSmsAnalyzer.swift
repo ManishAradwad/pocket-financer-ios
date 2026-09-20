@@ -5,10 +5,45 @@ struct StructuralSmsAnalyzer: Sendable {
         source: String,
         operation: SmsOperationSnapshot
     ) throws -> SmsAnalysis {
+        try analyze(
+            source: source,
+            operationID: operation.operationID,
+            configurationHash: operation.configurationHash,
+            primaryCurrency: operation.configuration.primaryCurrency,
+            enabledProfiles: operation.configuration.enabledProfiles,
+            sourceTimestampEpochMilliseconds: operation.configuration.sourceTimestampEpochMilliseconds,
+            sourceTimestampProvenance: operation.configuration.sourceTimestampProvenance
+        )
+    }
+
+    nonisolated func analyze(
+        source: String,
+        operation: SmsV4OperationSnapshot
+    ) throws -> SmsAnalysis {
+        try analyze(
+            source: source,
+            operationID: operation.operationID,
+            configurationHash: operation.configurationHash,
+            primaryCurrency: operation.configuration.currencyContext.primaryCurrency,
+            enabledProfiles: operation.configuration.currencyContext.enabledProfileIDs,
+            sourceTimestampEpochMilliseconds: operation.configuration.receivedTimestamp.epochMs,
+            sourceTimestampProvenance: operation.configuration.receivedTimestamp.provenance
+        )
+    }
+
+    private nonisolated func analyze(
+        source: String,
+        operationID: UUID,
+        configurationHash: String,
+        primaryCurrency: String,
+        enabledProfiles: [String],
+        sourceTimestampEpochMilliseconds: Int64?,
+        sourceTimestampProvenance: String
+    ) throws -> SmsAnalysis {
         let sourceHash = CanonicalJSON.sha256(source)
         let identity = [
-            operation.operationID.uuidString.lowercased(), sourceHash,
-            operation.configurationHash, "pocketfinancer.structural-sms-analyzer/2",
+            operationID.uuidString.lowercased(), sourceHash,
+            configurationHash, "pocketfinancer.structural-sms-analyzer/2",
         ].joined(separator: "\0")
         let analysisID = String(CanonicalJSON.sha256(identity).prefix(24))
         let structuralView = SmsStructuralView(source)
@@ -89,7 +124,7 @@ struct StructuralSmsAnalyzer: Sendable {
                 let number = match.normalizedGroup("number")
             else { continue }
             let explicitCode = match.normalizedGroup("code")
-            let currency = explicitCode?.uppercased() ?? operation.configuration.primaryCurrency
+            let currency = explicitCode?.uppercased() ?? primaryCurrency
             let provenance =
                 explicitCode == nil
                 ? "explicit_unambiguous_symbol_or_marker" : "explicit_code"
@@ -183,7 +218,7 @@ struct StructuralSmsAnalyzer: Sendable {
         return SmsAnalysis(
             contract: "pocketfinancer.sms-analysis/2",
             analysisID: analysisID,
-            configurationHash: operation.configurationHash,
+            configurationHash: configurationHash,
             sourceHash: sourceHash,
             source: source,
             clauses: clauses,
@@ -191,12 +226,14 @@ struct StructuralSmsAnalyzer: Sendable {
             cues: cues,
             reasonCodes: reasons.sorted(),
             completedEventCount: directionCount,
-            profileID: operation.configuration.enabledProfiles.joined(separator: "+"),
-            primaryCurrency: operation.configuration.primaryCurrency,
+            profileID: enabledProfiles.joined(separator: "+"),
+            primaryCurrency: primaryCurrency,
             normalizedStructuralFingerprint: CanonicalJSON.sha256(structuralView.normalized),
-            currencyContextHash: currencyContextHash(operation.configuration),
-            sourceTimestampEpochMilliseconds: operation.configuration.sourceTimestampEpochMilliseconds,
-            sourceTimestampProvenance: operation.configuration.sourceTimestampProvenance,
+            currencyContextHash: currencyContextHash(
+                primaryCurrency: primaryCurrency, enabledProfiles: enabledProfiles
+            ),
+            sourceTimestampEpochMilliseconds: sourceTimestampEpochMilliseconds,
+            sourceTimestampProvenance: sourceTimestampProvenance,
             unicodeDatabaseVersion: "14.0.0",
             clauseAnnotations: annotations
         )
@@ -335,14 +372,15 @@ struct StructuralSmsAnalyzer: Sendable {
     }
 
     private nonisolated func currencyContextHash(
-        _ configuration: SmsOperationConfiguration
+        primaryCurrency: String,
+        enabledProfiles: [String]
     ) -> String {
-        let profiles = configuration.enabledProfiles.map {
+        let profiles = enabledProfiles.map {
             ["profile_id": $0, "revision": 1] as [String: Any]
         }
         let data = try! JSONSerialization.data(
             withJSONObject: [
-                "primary_currency": configuration.primaryCurrency,
+                "primary_currency": primaryCurrency,
                 "profiles": profiles,
             ],
             options: [.sortedKeys, .withoutEscapingSlashes]

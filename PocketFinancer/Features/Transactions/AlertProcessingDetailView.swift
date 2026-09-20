@@ -6,6 +6,7 @@ struct AlertProcessingDetailView: View {
     var transaction: Transaction?
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @Query(sort: \ExtractionRun.startedAt, order: .reverse) private var allExtractionRuns: [ExtractionRun]
     @Query(sort: \StructuredGenerationSnapshot.capturedAt) private var allGenerationSnapshots:
         [StructuredGenerationSnapshot]
@@ -160,7 +161,10 @@ struct AlertProcessingDetailView: View {
                 DecisionTraceTimeline(events: nativeTrace)
                 if let nativeReviewCase {
                     NavigationLink {
-                        ReviewCorrectionView(reviewCase: nativeReviewCase)
+                        ReviewCorrectionView(
+                            reviewCase: nativeReviewCase,
+                            onFinished: { dismiss() }
+                        )
                     } label: {
                         Label("Review, correct, retry, or reject", systemImage: "checklist")
                     }

@@ -369,7 +369,26 @@ struct SmsFieldCorrection: Codable, Equatable, Sendable {
     let previousRevisionID: UUID?
     let candidateID: String?
     let evidence: SmsEvidenceSpan?
+    let scalarEvidence: UnicodeScalarSpan?
     let newValue: String
+
+    init(
+        field: String,
+        classification: SmsFieldGroundingClassification,
+        previousRevisionID: UUID?,
+        candidateID: String?,
+        evidence: SmsEvidenceSpan?,
+        scalarEvidence: UnicodeScalarSpan? = nil,
+        newValue: String
+    ) {
+        self.field = field
+        self.classification = classification
+        self.previousRevisionID = previousRevisionID
+        self.candidateID = candidateID
+        self.evidence = evidence
+        self.scalarEvidence = scalarEvidence
+        self.newValue = newValue
+    }
 }
 
 enum ReviewCommandKind: String, Codable, Sendable {

@@ -83,6 +83,87 @@ private struct CancellingIngestionSelector: DirectCandidateSelecting {
     }
 }
 
+private struct GroundedIngestionExtractor: FoundationSmsExtracting {
+    let probe: IngestionSelectorProbe?
+
+    init(probe: IngestionSelectorProbe? = nil) {
+        self.probe = probe
+    }
+
+    func extract(requestJSON: String) async throws -> DirectSelectorResponse {
+        await probe?.recordCall()
+        let request = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(requestJSON.utf8)) as? [String: Any]
+        )
+        let source = try XCTUnwrap(request["message"] as? String)
+        let document: [String: Any]
+        if source.contains("OTP") {
+            document = ["decision": "none"]
+        } else {
+            document = [
+                "decision": "posted",
+                "amount": try field(
+                    source: source,
+                    alternatives: ["Rs.500.00", "INR 500.00"],
+                    value: ["value": "500.00", "currency": "INR"]
+                ),
+                "direction": try field(
+                    source: source,
+                    alternatives: ["debited"],
+                    value: ["value": "debit"]
+                ),
+                "account": try field(
+                    source: source,
+                    alternatives: ["XXXXXX0000", "**0000"],
+                    value: ["reference": source.contains("XXXXXX0000") ? "XXXXXX0000" : "**0000"]
+                ),
+                "counterparty": try field(
+                    source: source,
+                    alternatives: ["Demo Store"],
+                    value: ["value": "Demo Store"]
+                ),
+            ]
+        }
+        let data = try JSONSerialization.data(
+            withJSONObject: document, options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        return DirectSelectorResponse(
+            rawOutput: String(decoding: data, as: UTF8.self),
+            runtimeProfileJSON: #"{"generation_mode":"DIRECT_NON_THINKING"}"#,
+            requestJSON: requestJSON,
+            completion: "complete"
+        )
+    }
+
+    private func field(
+        source: String,
+        alternatives: [String],
+        value: [String: Any]
+    ) throws -> [String: Any] {
+        for text in alternatives {
+            if let range = source.range(of: text) {
+                let scalars = source.unicodeScalars
+                let start = source[..<range.lowerBound].unicodeScalars.count
+                let end = start + source[range].unicodeScalars.count
+                return value.merging([
+                    "evidence": ["start_scalar": start, "end_scalar": end, "text": String(source[range])]
+                ]) { current, _ in current }
+            }
+        }
+        throw TransactionParserError.generationFailed
+    }
+}
+
+private struct CancellingIngestionExtractor: FoundationSmsExtracting {
+    let probe: IngestionSelectorProbe
+
+    func extract(requestJSON _: String) async throws -> DirectSelectorResponse {
+        await probe.recordCall()
+        try await Task.sleep(for: .seconds(30))
+        throw TransactionParserError.generationFailed
+    }
+}
+
 @MainActor
 final class AlertIngestionServiceTests: XCTestCase {
     func testEnqueueDurablyAdmitsEvidenceWithoutStartingSelector() async throws {
@@ -121,7 +202,7 @@ final class AlertIngestionServiceTests: XCTestCase {
         let context = database.container.mainContext
         let service = AlertIngestionService(
             context: context,
-            directSelector: GroundedIngestionSelector()
+            smsExtractor: GroundedIngestionExtractor()
         )
 
         let receipt = try await service.ingest(
@@ -141,9 +222,69 @@ final class AlertIngestionServiceTests: XCTestCase {
         XCTAssertFalse(try context.fetch(FetchDescriptor<SmsProcessingTraceEvent>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<ExtractionRun>()).isEmpty)
+
+        let review = try XCTUnwrap(context.fetch(FetchDescriptor<SmsReviewCase>()).first)
+        let command = ReviewCommand(
+            actionID: UUID(),
+            reviewCaseID: review.id,
+            expectedRevision: review.revision,
+            kind: .confirm,
+            corrections: [],
+            retryConfiguration: nil
+        )
+        let store = SmsProcessingStore(modelContainer: database.container)
+        let confirmation = try await store.resolveReview(
+            command,
+            now: TestFixtures.receivedAt.addingTimeInterval(1)
+        )
+        let replay = try await store.resolveReview(
+            command,
+            now: TestFixtures.receivedAt.addingTimeInterval(2)
+        )
+
+        XCTAssertFalse(confirmation.replayed)
+        XCTAssertTrue(replay.replayed)
+        let mismatchedReplay = ReviewCommand(
+            actionID: command.actionID,
+            reviewCaseID: UUID(),
+            expectedRevision: command.expectedRevision,
+            kind: command.kind,
+            corrections: command.corrections,
+            retryConfiguration: command.retryConfiguration
+        )
+        do {
+            _ = try await store.resolveReview(
+                mismatchedReplay,
+                now: TestFixtures.receivedAt.addingTimeInterval(3)
+            )
+            XCTFail("An action replay must remain bound to its original review")
+        } catch SmsProcessingStoreError.invalidCommand {
+            // Expected: an action ID cannot be replayed against another review.
+        } catch {
+            XCTFail("Expected invalidCommand, got \(error)")
+        }
+        let verification = ModelContext(database.container)
+        let transaction = try XCTUnwrap(
+            verification.fetch(FetchDescriptor<Transaction>()).first
+        )
+        XCTAssertEqual(transaction.occurredAt, TestFixtures.receivedAt)
+        XCTAssertEqual(try verification.fetch(FetchDescriptor<Account>()).count, 1)
+        XCTAssertEqual(try verification.fetch(FetchDescriptor<SmsAccountAlias>()).count, 1)
+        XCTAssertEqual(
+            try verification.fetch(FetchDescriptor<SmsTransactionRevision>()).count,
+            1
+        )
+        XCTAssertEqual(
+            try verification.fetch(FetchDescriptor<SmsUserFeedbackEvent>()).count,
+            1
+        )
+        XCTAssertEqual(
+            try verification.fetch(FetchDescriptor<SmsReviewCase>()).first?.state,
+            .confirmed
+        )
     }
 
-    func testStandaloneOtpIsDiscardedBeforeSelectorAndSensitiveEvidenceIsErased() async throws {
+    func testStandaloneOtpIsDiscardedByExtractorAndSensitiveEvidenceIsErased() async throws {
         let restore = usePrimaryCurrency("INR")
         defer { restore() }
         let database = try AppDatabase(inMemory: true)
@@ -151,7 +292,7 @@ final class AlertIngestionServiceTests: XCTestCase {
         let probe = IngestionSelectorProbe()
         let service = AlertIngestionService(
             context: context,
-            directSelector: GroundedIngestionSelector(probe: probe)
+            smsExtractor: GroundedIngestionExtractor(probe: probe)
         )
 
         let receipt = try await service.ingest(
@@ -167,8 +308,8 @@ final class AlertIngestionServiceTests: XCTestCase {
         XCTAssertEqual(alert.status, .rejected)
         XCTAssertTrue(alert.rawBody.isEmpty)
         let calls = await probe.callCount
-        XCTAssertEqual(calls, 0)
-        XCTAssertTrue(try context.fetch(FetchDescriptor<SmsSelectorAttempt>()).isEmpty)
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<SmsSelectorAttempt>()).count, 1)
         XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
     }
 
@@ -213,7 +354,7 @@ final class AlertIngestionServiceTests: XCTestCase {
         let context = database.container.mainContext
         let service = AlertIngestionService(
             context: context,
-            directSelector: GroundedIngestionSelector()
+            smsExtractor: GroundedIngestionExtractor()
         )
 
         let receipt = try await service.ingest(
@@ -238,7 +379,7 @@ final class AlertIngestionServiceTests: XCTestCase {
         let probe = IngestionSelectorProbe()
         let service = AlertIngestionService(
             context: context,
-            directSelector: CancellingIngestionSelector(probe: probe)
+            smsExtractor: CancellingIngestionExtractor(probe: probe)
         )
         _ = try service.enqueue(
             body: "INR 500.00 was debited from account **0000 at Demo Store.",
@@ -266,7 +407,7 @@ final class AlertIngestionServiceTests: XCTestCase {
         let context = database.container.mainContext
         let service = AlertIngestionService(
             context: context,
-            directSelector: GroundedIngestionSelector()
+            smsExtractor: GroundedIngestionExtractor()
         )
         let first = try await service.ingest(
             body: "INR 500.00 was debited from account **0000 at Demo Store.",
@@ -296,6 +437,49 @@ final class AlertIngestionServiceTests: XCTestCase {
         XCTAssertEqual(reviews.first?.id, originalReview.id)
         XCTAssertEqual(reviews.first?.currentOperationID, retryOperation.id)
         XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+    }
+
+    func testOriginalRetryNeverSilentlyUpgradesFrozenV1Operation() async throws {
+        let restore = usePrimaryCurrency("INR")
+        defer { restore() }
+        let database = try AppDatabase(inMemory: true)
+        let context = database.container.mainContext
+        let service = AlertIngestionService(
+            context: context,
+            smsExtractor: GroundedIngestionExtractor()
+        )
+        let first = try await service.ingest(
+            body: TestFixtures.validBody,
+            sender: "BANK",
+            receivedAt: TestFixtures.receivedAt,
+            sourceApplication: "Messages",
+            origin: .shortcut
+        )
+        let original = try XCTUnwrap(
+            context.fetch(FetchDescriptor<SmsProcessingOperation>()).first
+        )
+        var configuration = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(original.configurationJSON.utf8))
+                as? [String: Any]
+        )
+        configuration["contract"] = "pocketfinancer.processing-config/1"
+        original.configurationJSON = try SmsV4ProcessingJSON.canonical(configuration)
+        original.contractReleaseID = "frozen-v1-test"
+        try context.save()
+
+        let retried = try await service.retry(
+            alertID: first.alertID,
+            parentOperationID: original.id,
+            configurationMode: "original"
+        )
+
+        XCTAssertEqual(retried.disposition, .needsReview)
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<InboxAlert>()).first?.lastErrorCode,
+            "original_configuration_adapter_unavailable"
+        )
+        XCTAssertEqual(try context.fetch(FetchDescriptor<SmsProcessingOperation>()).count, 1)
+        XCTAssertEqual(original.contractReleaseID, "frozen-v1-test")
     }
 
     func testAutomaticAttemptLimitStopsBeforeCreatingOperation() async throws {

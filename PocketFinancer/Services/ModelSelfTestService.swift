@@ -19,7 +19,7 @@ struct ModelSelfTestAPILimitation: Equatable, Identifiable, Sendable {
     var id: String { metric }
 }
 
-/// Ephemeral, owner-visible evidence from one synthetic grounded selector run.
+/// Ephemeral, owner-visible evidence from one synthetic strict extractor run.
 struct ModelSelfTestResult: Equatable, Identifiable, Sendable {
     let id: UUID
     let outcome: ModelSelfTestOutcome
@@ -45,7 +45,7 @@ struct ModelSelfTestResult: Equatable, Identifiable, Sendable {
 
     var summary: String {
         if passed {
-            return "Apple Foundation Models completed one grounded Candidate Selector pass "
+            return "Apple Foundation Models completed one strict SMS Extractor pass "
                 + "and the shadow gate retained it without a ledger write."
         }
         return failure?.ownerMessage ?? "The local synthetic selector test did not pass."
@@ -88,7 +88,8 @@ enum ModelSelfTestService {
 
     @MainActor
     static func run(
-        selector: any DirectCandidateSelecting = FoundationDirectCandidateSelector(),
+        extractor: any FoundationSmsExtracting = FoundationSmsExtractor(),
+        extractorEligibilityOverride: Bool? = nil,
         receivedAt requestedReceivedAt: Date? = nil
     ) async -> ModelSelfTestResult {
         let startedAt = Date.now
@@ -107,18 +108,17 @@ enum ModelSelfTestService {
             )
             context.insert(alert)
             try context.save()
-            let snapshot = try SmsOperationSnapshotFactory(context: context).create(
+            let snapshot = try SmsV4OperationSnapshotFactory(context: context).create(
                 sourceAlertID: alert.id,
                 trigger: "diagnostic",
                 primaryCurrency: "INR",
                 enabledProfiles: ["core-en", "india"],
-                selectorModelIdentifier: "apple-system-language-model",
-                selectorRuntimeVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+                extractorEligibilityOverride: extractorEligibilityOverride,
                 now: startedAt
             )
-            let coordinator = DefaultSmsProcessingCoordinator(
+            let coordinator = SmsV4ProcessingCoordinator(
                 store: SmsProcessingStore(modelContainer: database.container),
-                selector: selector,
+                extractor: extractor,
                 accountResolver: { _ in .unique(accountID: UUID()) }
             )
             let outcome = await coordinator.process(
@@ -148,10 +148,10 @@ enum ModelSelfTestService {
                 )
             ).first
             let reconstruction = storedResult?.semanticResultJSON.flatMap {
-                try? JSONDecoder().decode(
-                    ReconstructedSmsTransaction.self, from: Data($0.utf8)
-                )
+                try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
             }
+            let semantic = reconstruction?["semantic_result"] as? [String: Any]
+            let money = semantic?["money"] as? [String: Any]
             let ledgerIsEmpty = try verification.fetch(FetchDescriptor<Transaction>()).isEmpty
             let settlement: String
             let reasons: [String]
@@ -170,9 +170,9 @@ enum ModelSelfTestService {
                 reasons = [reason]
             }
             let passed =
-                reconstruction?.minorUnits == 50_000
-                && reconstruction?.currency == "INR"
-                && reconstruction?.direction == "debit"
+                (money?["minor_units"] as? NSNumber)?.int64Value == 50_000
+                && (money?["currency"] as? String) == "INR"
+                && (semantic?["direction"] as? String) == "debit"
                 && settlement == "retained_for_review"
                 && ledgerIsEmpty
             return result(
@@ -180,15 +180,7 @@ enum ModelSelfTestService {
                 startedAt: startedAt,
                 receivedAt: receivedAt,
                 snapshot: snapshot,
-                exactRequest: attempt?.requestJSON
-                    ?? analysis.flatMap {
-                        try? JSONDecoder().decode(SmsAnalysis.self, from: Data($0.canonicalJSON.utf8))
-                    }.flatMap {
-                        try? FoundationDirectCandidateSelector.requestJSON(
-                            source: syntheticBody, analysis: $0
-                        )
-                    }
-                    ?? "{}",
+                exactRequest: attempt?.requestJSON ?? "{}",
                 exactOutput: attempt?.rawOutput,
                 outputCompletion: attempt?.completionRawValue ?? "unavailable",
                 analysisJSON: analysis?.canonicalJSON,
@@ -199,7 +191,7 @@ enum ModelSelfTestService {
                         safeCode: attempt?.safeErrorCode
                             ?? reasons.first
                             ?? "synthetic_expectation_mismatch",
-                        ownerMessage: "The synthetic grounded selector run was retained safely "
+                        ownerMessage: "The synthetic strict extractor run was retained safely "
                             + "but did not produce the expected INR 500.00 debit.",
                         isRetryable: attempt?.safeErrorCode == "runtime_unavailable"
                     )
@@ -212,10 +204,10 @@ enum ModelSelfTestService {
                 startedAt: startedAt,
                 completedAt: completedAt,
                 elapsed: max(0, completedAt.timeIntervalSince(startedAt)),
-                contractVersion: "pocketfinancer.grounded-candidate-selector-input/1",
+                contractVersion: "pocketfinancer.sms-extractor-input/1",
                 configurationHash: "unavailable",
                 generationMode: "DIRECT_NON_THINKING",
-                exactInstructions: FoundationDirectCandidateSelector.selectorInstructions,
+                exactInstructions: (try? FoundationSmsExtractor.instructions()) ?? "unavailable",
                 exactRequest: "{}",
                 exactOutput: nil,
                 outputCompletion: "unavailable",
@@ -238,7 +230,7 @@ enum ModelSelfTestService {
         passed: Bool,
         startedAt: Date,
         receivedAt: Date,
-        snapshot: SmsOperationSnapshot,
+        snapshot: SmsV4OperationSnapshot,
         exactRequest: String,
         exactOutput: String?,
         outputCompletion: String,
@@ -253,10 +245,10 @@ enum ModelSelfTestService {
             startedAt: startedAt,
             completedAt: completedAt,
             elapsed: max(0, completedAt.timeIntervalSince(startedAt)),
-            contractVersion: "pocketfinancer.grounded-candidate-selector-input/1",
+            contractVersion: "pocketfinancer.sms-extractor-input/1",
             configurationHash: snapshot.configurationHash,
-            generationMode: snapshot.configuration.generationMode,
-            exactInstructions: FoundationDirectCandidateSelector.selectorInstructions,
+            generationMode: snapshot.configuration.extractor.generationMode,
+            exactInstructions: (try? FoundationSmsExtractor.instructions()) ?? "unavailable",
             exactRequest: exactRequest,
             exactOutput: exactOutput,
             outputCompletion: outputCompletion,

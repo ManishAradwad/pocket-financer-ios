@@ -157,6 +157,13 @@ enum PocketFinancerSchemaV6: VersionedSchema {
     }
 }
 
+/// V7 is an explicit durable boundary for the v4 extractor. Historical
+/// snapshots retain their versioned payloads and are never reinterpreted.
+enum PocketFinancerSchemaV7: VersionedSchema {
+    static let versionIdentifier = Schema.Version(7, 0, 0)
+    static var models: [any PersistentModel.Type] { PocketFinancerSchemaV6.models }
+}
+
 enum PocketFinancerMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
         [
@@ -166,6 +173,7 @@ enum PocketFinancerMigrationPlan: SchemaMigrationPlan {
             PocketFinancerSchemaV4.self,
             PocketFinancerSchemaV5.self,
             PocketFinancerSchemaV6.self,
+            PocketFinancerSchemaV7.self,
         ]
     }
 
@@ -190,6 +198,10 @@ enum PocketFinancerMigrationPlan: SchemaMigrationPlan {
             .lightweight(
                 fromVersion: PocketFinancerSchemaV5.self,
                 toVersion: PocketFinancerSchemaV6.self
+            ),
+            .lightweight(
+                fromVersion: PocketFinancerSchemaV6.self,
+                toVersion: PocketFinancerSchemaV7.self
             ),
         ]
     }

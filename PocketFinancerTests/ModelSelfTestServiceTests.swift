@@ -4,17 +4,18 @@ import XCTest
 
 @MainActor
 final class ModelSelfTestServiceTests: XCTestCase {
-    func testGroundedSelectorPassesThroughRealShadowCoordinator() async throws {
+    func testGroundedExtractorPassesThroughRealShadowCoordinator() async throws {
         let receivedAt = Date(timeIntervalSince1970: 1_785_955_200.125)
 
         let result = await ModelSelfTestService.run(
-            selector: GroundedSelfTestSelector(),
+            extractor: GroundedSelfTestExtractor(),
+            extractorEligibilityOverride: true,
             receivedAt: receivedAt
         )
 
         XCTAssertTrue(result.passed)
         XCTAssertEqual(result.outcome, .passed)
-        XCTAssertEqual(result.contractVersion, "pocketfinancer.grounded-candidate-selector-input/1")
+        XCTAssertEqual(result.contractVersion, "pocketfinancer.sms-extractor-input/1")
         XCTAssertEqual(result.generationMode, "DIRECT_NON_THINKING")
         XCTAssertEqual(result.outputCompletion, "complete")
         XCTAssertEqual(result.syntheticBody, ModelSelfTestService.syntheticBody)
@@ -23,7 +24,7 @@ final class ModelSelfTestServiceTests: XCTestCase {
         XCTAssertEqual(result.settlement, "retained_for_review")
         XCTAssertNil(result.failure)
         XCTAssertNotNil(result.analysisJSON)
-        XCTAssertTrue(result.exactRequest.contains("grounded-candidate-selector-input/1"))
+        XCTAssertTrue(result.exactRequest.contains("sms-extractor-input/1"))
         XCTAssertTrue(result.exactOutput?.contains(#""decision":"posted""#) == true)
         XCTAssertGreaterThanOrEqual(result.completedAt, result.startedAt)
         XCTAssertGreaterThanOrEqual(result.elapsed, 0)
@@ -32,9 +33,10 @@ final class ModelSelfTestServiceTests: XCTestCase {
         XCTAssertTrue(result.apiLimitations.contains { $0.metric.localizedCaseInsensitiveContains("reasoning") })
     }
 
-    func testUnavailableSelectorFailsClosedAndKeepsLedgerEmpty() async {
+    func testUnavailableExtractorFailsClosedAndKeepsLedgerEmpty() async {
         let result = await ModelSelfTestService.run(
-            selector: FailingSelfTestSelector(),
+            extractor: FailingSelfTestExtractor(),
+            extractorEligibilityOverride: true,
             receivedAt: TestFixtures.receivedAt
         )
 
@@ -48,70 +50,78 @@ final class ModelSelfTestServiceTests: XCTestCase {
         XCTAssertTrue(result.summary.localizedCaseInsensitiveContains("did not produce"))
     }
 
-    func testForeignCandidateOutputFailsClosed() async {
+    func testMismatchedEvidenceOutputFailsClosed() async {
         let result = await ModelSelfTestService.run(
-            selector: ForeignCandidateSelfTestSelector(),
+            extractor: MismatchedEvidenceSelfTestExtractor(),
+            extractorEligibilityOverride: true,
             receivedAt: TestFixtures.receivedAt
         )
 
         XCTAssertFalse(result.passed)
         XCTAssertEqual(result.settlement, "retained_for_review")
-        XCTAssertEqual(result.failure?.safeCode, "selector_unknown_or_cross_message_candidate")
+        XCTAssertEqual(result.failure?.safeCode, "extractor_evidence_mismatch")
         XCTAssertEqual(result.failure?.isRetryable, false)
     }
 }
 
-private struct GroundedSelfTestSelector: DirectCandidateSelecting {
-    func select(source: String, analysis: SmsAnalysis) async throws -> DirectSelectorResponse {
-        let amount = try requiredCandidate(.amount, in: analysis)
-        let direction = try requiredCandidate(.direction, in: analysis)
-        let account = try requiredCandidate(.account, in: analysis)
-        let counterparty = try requiredCandidate(.counterparty, in: analysis)
-        let rawOutput =
-            #"{"account":"\#(account.id)","amount":"\#(amount.id)","counterparty":"\#(counterparty.id)","decision":"posted","direction":"\#(direction.id)"}"#
+private struct GroundedSelfTestExtractor: FoundationSmsExtracting {
+    func extract(requestJSON: String) async throws -> DirectSelectorResponse {
+        let rawOutput = try strictPostedOutput()
         return DirectSelectorResponse(
             rawOutput: rawOutput,
             runtimeProfileJSON: #"{"generation_mode":"DIRECT_NON_THINKING"}"#,
-            requestJSON: try FoundationDirectCandidateSelector.requestJSON(
-                source: source,
-                analysis: analysis
-            ),
+            requestJSON: requestJSON,
             completion: "complete"
         )
     }
-
-    private func requiredCandidate(
-        _ kind: SmsCandidateKind,
-        in analysis: SmsAnalysis
-    ) throws -> SmsCandidate {
-        guard let candidate = analysis.candidates.first(where: { $0.kind == kind }) else {
-            throw SelfTestSelectorError.missingCandidate
-        }
-        return candidate
-    }
 }
 
-private struct FailingSelfTestSelector: DirectCandidateSelecting {
-    func select(source _: String, analysis _: SmsAnalysis) async throws -> DirectSelectorResponse {
+private struct FailingSelfTestExtractor: FoundationSmsExtracting {
+    func extract(requestJSON _: String) async throws -> DirectSelectorResponse {
         throw TransactionParserError.modelUnavailable(.modelNotReady)
     }
 }
 
-private struct ForeignCandidateSelfTestSelector: DirectCandidateSelecting {
-    func select(source: String, analysis: SmsAnalysis) async throws -> DirectSelectorResponse {
-        DirectSelectorResponse(
-            rawOutput:
-                #"{"account":"foreign","amount":"foreign","counterparty":"foreign","decision":"posted","direction":"foreign"}"#,
+private struct MismatchedEvidenceSelfTestExtractor: FoundationSmsExtracting {
+    func extract(requestJSON: String) async throws -> DirectSelectorResponse {
+        var document = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data((try strictPostedOutput()).utf8))
+                as? [String: Any]
+        )
+        var account = try XCTUnwrap(document["account"] as? [String: Any])
+        account["reference"] = "XX9999"
+        document["account"] = account
+        let data = try JSONSerialization.data(
+            withJSONObject: document, options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        return DirectSelectorResponse(
+            rawOutput: String(decoding: data, as: UTF8.self),
             runtimeProfileJSON: #"{"generation_mode":"DIRECT_NON_THINKING"}"#,
-            requestJSON: try FoundationDirectCandidateSelector.requestJSON(
-                source: source,
-                analysis: analysis
-            ),
+            requestJSON: requestJSON,
             completion: "complete"
         )
     }
 }
 
-private enum SelfTestSelectorError: Error {
-    case missingCandidate
+private func strictPostedOutput() throws -> String {
+    let source = ModelSelfTestService.syntheticBody
+    func field(_ text: String, value: [String: Any]) throws -> [String: Any] {
+        let range = try XCTUnwrap(source.range(of: text))
+        let start = source[..<range.lowerBound].unicodeScalars.count
+        let end = start + source[range].unicodeScalars.count
+        return value.merging([
+            "evidence": ["start_scalar": start, "end_scalar": end, "text": text]
+        ]) { current, _ in current }
+    }
+    let document: [String: Any] = [
+        "decision": "posted",
+        "amount": try field("INR 500.00", value: ["value": "500.00", "currency": "INR"]),
+        "direction": try field("paid", value: ["value": "debit"]),
+        "account": try field("XXXXXX0000", value: ["reference": "XXXXXX0000"]),
+        "counterparty": try field("Demo Store", value: ["value": "Demo Store"]),
+    ]
+    let data = try JSONSerialization.data(
+        withJSONObject: document, options: [.sortedKeys, .withoutEscapingSlashes]
+    )
+    return String(decoding: data, as: UTF8.self)
 }

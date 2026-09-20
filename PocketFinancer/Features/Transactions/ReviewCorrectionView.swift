@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ReviewCorrectionView: View {
     let reviewCase: SmsReviewCase
+    var onFinished: (() -> Void)?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Account.name) private var accounts: [Account]
@@ -20,10 +21,72 @@ struct ReviewCorrectionView: View {
     @State private var newAccountSuffix = ""
     @State private var groundedProposal: ReconstructedSmsTransaction?
     @State private var groundedProposalAccountID: UUID?
+    @State private var v4OriginalProposal: SmsReviewProposal?
+    @State private var v4Proposal: SmsReviewProposal?
+    @State private var v4DraftCorrections: [SmsFieldCorrection]?
+    @State private var sourceAlert: InboxAlert?
+    @State private var invalidV4Proposal = false
     @State private var errorMessage: String?
     @State private var saving = false
 
     var body: some View {
+        Group {
+            if let original = v4OriginalProposal,
+                let proposal = v4Proposal,
+                let sourceAlert
+            {
+                GroundedReviewCorrectionView(
+                    original: original,
+                    initial: proposal,
+                    source: sourceAlert.rawBody,
+                    sender: sourceAlert.sender,
+                    reasonCodes: reviewCase.reasonCodesRawValue.split(separator: "\n").map(String.init),
+                    resolvedAccountName: proposal.resolvedAccountID.flatMap { id in
+                        accounts.first { $0.id == id }?.name
+                    },
+                    draftCorrections: v4DraftCorrections,
+                    saving: saving,
+                    onResolve: resolveGrounded
+                )
+            } else if invalidV4Proposal {
+                invalidGroundedBody
+            } else {
+                legacyBody
+            }
+        }
+        .onAppear(perform: loadInitialState)
+        .alert(
+            "Could not complete review",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private var invalidGroundedBody: some View {
+        Form {
+            Section {
+                Label("The on-device result could not be verified", systemImage: "exclamationmark.shield")
+                    .font(.headline)
+                Text("Nothing can be saved from this result. Retry local extraction or mark the alert as not a transaction.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Button("Retry extraction") { resolve(.retry, retry: "current") }
+                    .disabled(saving)
+                Button("Not a transaction", role: .destructive) { resolve(.reject) }
+                    .disabled(saving)
+            }
+        }
+        .navigationTitle("Review transaction")
+    }
+
+    private var legacyBody: some View {
         Form {
             Section {
                 Label(outcomeTitle, systemImage: outcomeIcon)
@@ -133,18 +196,6 @@ struct ReviewCorrectionView: View {
             }
         }
         .navigationTitle(groundedProposal == nil ? "Add transaction" : "Review transaction")
-        .onAppear(perform: loadInitialState)
-        .alert(
-            "Could not complete review",
-            isPresented: Binding(
-                get: { errorMessage != nil },
-                set: { if !$0 { errorMessage = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
-        }
     }
 
     @ViewBuilder
@@ -294,7 +345,7 @@ struct ReviewCorrectionView: View {
                         configurationMode: retry
                     )
                 }
-                dismiss()
+                finish()
             } catch SmsProcessingStoreError.invalidCommand {
                 errorMessage =
                     "The requested action is not available for this alert. Nothing was saved."
@@ -303,6 +354,46 @@ struct ReviewCorrectionView: View {
                     "The review changed or the local store was unavailable. Nothing was saved. Reopen the alert and try again."
             }
         }
+    }
+
+    private func resolveGrounded(
+        _ kind: ReviewCommandKind,
+        _ corrections: [SmsFieldCorrection],
+        _ retry: String?
+    ) {
+        saving = true
+        let command = ReviewCommand(
+            actionID: UUID(),
+            reviewCaseID: reviewCase.id,
+            expectedRevision: reviewCase.revision,
+            kind: kind,
+            corrections: corrections,
+            retryConfiguration: retry
+        )
+        Task { @MainActor in
+            defer { saving = false }
+            do {
+                let store = SmsProcessingStore(modelContainer: modelContext.container)
+                _ = try await store.resolveReview(command)
+                if kind == .retry, let retry {
+                    _ = try await AlertIngestionService(context: modelContext).retry(
+                        alertID: reviewCase.sourceAlertID,
+                        parentOperationID: reviewCase.currentOperationID,
+                        configurationMode: retry
+                    )
+                }
+                finish()
+            } catch SmsProcessingStoreError.invalidCommand {
+                errorMessage = "The selected source evidence is no longer valid. Nothing was saved."
+            } catch {
+                errorMessage =
+                    "The review changed or the local store was unavailable. Nothing was saved. Reopen the alert and try again."
+            }
+        }
+    }
+
+    private func finish() {
+        if let onFinished { onFinished() } else { dismiss() }
     }
 
     private func manualCorrections(
@@ -351,11 +442,33 @@ struct ReviewCorrectionView: View {
     private func loadGroundedProposal() {
         let operationID = reviewCase.currentOperationID
         let sourceAlertID = reviewCase.sourceAlertID
-        if let stored = try? modelContext.fetch(
+        let alert = try? modelContext.fetch(
+            FetchDescriptor<InboxAlert>(
+                predicate: #Predicate { $0.id == sourceAlertID }
+            )
+        ).first
+        sourceAlert = alert
+        let stored = try? modelContext.fetch(
             FetchDescriptor<SmsReconstructedResult>(
                 predicate: #Predicate { $0.operationID == operationID }
             )
-        ).first,
+        ).first
+        if let stored, stored.contractVersion == "pocketfinancer.processing-result/3" {
+            guard let alert,
+                let proposal = SmsReviewProjection.parse(
+                resultJSON: stored.semanticResultJSON,
+                source: alert.rawBody
+                )
+            else {
+                invalidV4Proposal = true
+                return
+            }
+            invalidV4Proposal = false
+            v4OriginalProposal = proposal
+            v4Proposal = proposal
+            occurredAt = proposal.receiptTimestamp
+            return
+        } else if let stored,
             let resultJSON = stored.semanticResultJSON,
             let result = try? JSONDecoder().decode(
                 ReconstructedSmsTransaction.self,
@@ -373,11 +486,7 @@ struct ReviewCorrectionView: View {
             if let milliseconds = result.occurredAtEpochMilliseconds {
                 occurredAt = Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
             }
-        } else if let alert = try? modelContext.fetch(
-            FetchDescriptor<InboxAlert>(
-                predicate: #Predicate { $0.id == sourceAlertID }
-            )
-        ).first {
+        } else if let alert {
             occurredAt = alert.receivedAt
         }
 
@@ -408,6 +517,17 @@ struct ReviewCorrectionView: View {
                 from: Data(draftJSON.utf8)
             )
         else { return }
+        if let original = v4OriginalProposal, let sourceAlert {
+            v4DraftCorrections = corrections
+            v4Proposal = try? SmsReviewProjection.applying(
+                corrections.filter {
+                    $0.scalarEvidence != nil || $0.field == "counterparty"
+                },
+                to: original,
+                source: sourceAlert.rawBody
+            )
+            return
+        }
         if let savedCurrency = corrections.first(where: { $0.field == "currency" })?.newValue,
             PrimaryCurrencySettings.supportedCodes.contains(savedCurrency)
         {

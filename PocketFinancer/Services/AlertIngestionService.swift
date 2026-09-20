@@ -53,6 +53,7 @@ final class AlertIngestionService {
     private let context: ModelContext
     private let contextSaver: @MainActor (ModelContext) throws -> Void
     private let directSelector: any DirectCandidateSelecting
+    private let smsExtractor: any FoundationSmsExtracting
 
     /// Main-actor reentrancy permits another service instance to enter while a parser
     /// request is suspended. A process-wide token prevents a second attempt for the same
@@ -77,11 +78,13 @@ final class AlertIngestionService {
     init(
         context: ModelContext,
         contextSaver: @escaping @MainActor (ModelContext) throws -> Void = { try $0.save() },
-        directSelector: any DirectCandidateSelecting = FoundationDirectCandidateSelector()
+        directSelector: any DirectCandidateSelecting = FoundationDirectCandidateSelector(),
+        smsExtractor: any FoundationSmsExtracting = FoundationSmsExtractor()
     ) {
         self.context = context
         self.contextSaver = contextSaver
         self.directSelector = directSelector
+        self.smsExtractor = smsExtractor
     }
 
     static func enqueueLive(
@@ -379,6 +382,22 @@ final class AlertIngestionService {
             mode: retryConfigurationMode,
             currentPrimaryCurrency: currentPrimaryCurrency
         )
+        let originalContract = try originalConfigurationContract(
+            parentOperationID: retryParentOperationID,
+            mode: retryConfigurationMode
+        )
+        if let originalContract,
+           ![
+               "pocketfinancer.processing-config/2",
+               "pocketfinancer.processing-config/4",
+           ].contains(originalContract)
+        {
+            currentAlert.status = .needsReview
+            currentAlert.lastErrorCode = "original_configuration_adapter_unavailable"
+            currentAlert.updatedAt = .now
+            try save()
+            return IngestionReceipt(alertID: currentAlert.id, disposition: .needsReview)
+        }
 
         currentAlert.status = .processing
         currentAlert.attemptCount += 1
@@ -386,34 +405,60 @@ final class AlertIngestionService {
         currentAlert.updatedAt = .now
         try save()
 
-        let snapshot = try SmsOperationSnapshotFactory(context: context).create(
-            sourceAlertID: currentAlert.id,
-            parentOperationID: retryParentOperationID,
-            trigger: retryParentOperationID == nil
-                ? (allowBeyondAutomaticAttemptLimit ? "foreground_or_user" : "automatic_recovery")
-                : "retry",
-            primaryCurrency: retrySettings.primaryCurrency,
-            enabledProfiles: retrySettings.enabledProfiles,
-            selectorModelIdentifier: "apple-system-language-model",
-            selectorRuntimeVersion: ProcessInfo.processInfo.operatingSystemVersionString
-        )
         let processingStore = SmsProcessingStore(modelContainer: context.container)
-        let coordinator = DefaultSmsProcessingCoordinator(
-            store: processingStore,
-            selector: directSelector,
-            accountResolver: { evidence in
-                try GroundedAccountResolver(context: self.context).resolve(evidence)
-            }
+        let sourceReference = AdmittedMessageRef(
+            sourceID: currentAlert.id,
+            admissionReceiptID: currentAlert.id,
+            sourceDigest: CanonicalJSON.sha256(currentAlert.rawBody)
         )
-        let outcome = await coordinator.process(
-            source: AdmittedMessageRef(
-                sourceID: currentAlert.id,
-                admissionReceiptID: currentAlert.id,
-                sourceDigest: CanonicalJSON.sha256(currentAlert.rawBody)
-            ),
-            operation: snapshot,
-            observer: NoOpSmsProcessingObserver()
-        )
+        let operationTrigger = retryParentOperationID == nil
+            ? (allowBeyondAutomaticAttemptLimit ? "foreground_or_user" : "automatic_recovery")
+            : "retry"
+        let useLegacyOriginal = originalContract == "pocketfinancer.processing-config/2"
+        let outcome: SmsProcessingOutcome
+        if useLegacyOriginal {
+            let snapshot = try SmsOperationSnapshotFactory(context: context).create(
+                sourceAlertID: currentAlert.id,
+                parentOperationID: retryParentOperationID,
+                trigger: operationTrigger,
+                primaryCurrency: retrySettings.primaryCurrency,
+                enabledProfiles: retrySettings.enabledProfiles,
+                selectorModelIdentifier: "apple-system-language-model",
+                selectorRuntimeVersion: ProcessInfo.processInfo.operatingSystemVersionString
+            )
+            let coordinator = DefaultSmsProcessingCoordinator(
+                store: processingStore,
+                selector: directSelector,
+                accountResolver: { evidence in
+                    try GroundedAccountResolver(context: self.context).resolve(evidence)
+                }
+            )
+            outcome = await coordinator.process(
+                source: sourceReference,
+                operation: snapshot,
+                observer: NoOpSmsProcessingObserver()
+            )
+        } else {
+            let snapshot = try SmsV4OperationSnapshotFactory(context: context).create(
+                sourceAlertID: currentAlert.id,
+                parentOperationID: retryParentOperationID,
+                trigger: operationTrigger,
+                primaryCurrency: retrySettings.primaryCurrency,
+                enabledProfiles: retrySettings.enabledProfiles
+            )
+            let coordinator = SmsV4ProcessingCoordinator(
+                store: processingStore,
+                extractor: smsExtractor,
+                accountResolver: { evidence in
+                    try GroundedAccountResolver(context: self.context).resolve(evidence)
+                }
+            )
+            outcome = await coordinator.process(
+                source: sourceReference,
+                operation: snapshot,
+                observer: NoOpSmsProcessingObserver()
+            )
+        }
         guard Self.ownsClaim(for: alertID, claim: claim) else {
             return IngestionReceipt(alertID: alertID, disposition: .processingIncomplete)
         }
@@ -478,6 +523,25 @@ final class AlertIngestionService {
             enabledProfiles.allSatisfy({ ["core-en", "india"].contains($0) })
         else { throw AlertIngestionError.persistenceFailed }
         return (primaryCurrency, enabledProfiles)
+    }
+
+    private func originalConfigurationContract(
+        parentOperationID: UUID?,
+        mode: String
+    ) throws -> String? {
+        guard mode == "original", let parentOperationID else { return nil }
+        let parentID = parentOperationID
+        guard let operation = try context.fetch(
+            FetchDescriptor<SmsProcessingOperation>(
+                predicate: #Predicate { $0.id == parentID }
+            )
+        ).first,
+              let document = try? JSONSerialization.jsonObject(
+                with: Data(operation.configurationJSON.utf8)
+              ) as? [String: Any],
+              let contract = document["contract"] as? String
+        else { throw AlertIngestionError.persistenceFailed }
+        return contract
     }
 
     private func findDuplicate(contentDigest: String, receivedAt: Date) throws -> InboxAlert? {

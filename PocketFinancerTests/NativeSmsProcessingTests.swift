@@ -18,6 +18,42 @@ private struct FixedDirectSelector: DirectCandidateSelecting {
 
 @MainActor
 final class NativeSmsProcessingTests: XCTestCase {
+    func testNativeSmsV4BundleUsesSuccessorConfigWithoutModelFileHash() throws {
+        let binding = try NativeSmsV4Assets.verify()
+        XCTAssertEqual(binding.releaseID, "native-integration-v4")
+        XCTAssertEqual(binding.manifestSHA256, NativeSmsV4Assets.manifestSHA256)
+        XCTAssertEqual(binding.artifactsByContract.count, 44)
+        XCTAssertEqual(
+            binding.artifactsByContract["pocketfinancer.processing-config/4"]?.sha256,
+            NativeSmsV4Assets.processingConfigSHA256
+        )
+        let extractorSchema = try XCTUnwrap(
+            binding.artifactsByContract["pocketfinancer.processing-config/4"]
+        )
+        XCTAssertEqual(
+            extractorSchema.path,
+            "configs/sms_processing/contracts/v4/processing-config.schema.json"
+        )
+        let configuration = SmsV4OperationConfiguration(
+            operationID: UUID(), parentOperationID: nil, sourceID: UUID(),
+            trigger: "diagnostic", primaryCurrency: "INR",
+            enabledProfiles: ["core-en", "india"],
+            receivedAt: TestFixtures.receivedAt,
+            admissionAt: TestFixtures.receivedAt,
+            timezoneID: "UTC", binding: binding,
+            extractorEligible: true, createdAt: TestFixtures.receivedAt
+        )
+        let payload = try configuration.payloadJSON()
+        let hash = CanonicalJSON.sha256(payload)
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data((try configuration.documentJSON(configHash: hash)).utf8)
+        ) as? [String: Any])
+        let extractor = try XCTUnwrap(document["extractor"] as? [String: Any])
+        XCTAssertEqual(extractor["model_identity_kind"] as? String, "system_managed_runtime")
+        XCTAssertTrue(extractor["model_file_sha256"] is NSNull)
+        XCTAssertEqual(document["config_hash"] as? String, hash)
+    }
+
     func testNativeSmsV3BundleRetainsManifestPathsAndBytes() throws {
         let binding = try NativeSmsV3Assets.verify()
 

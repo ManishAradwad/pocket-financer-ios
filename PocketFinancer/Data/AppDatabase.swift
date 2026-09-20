@@ -168,7 +168,7 @@ final class AppDatabase {
     }
 
     nonisolated init(inMemory: Bool = false, storeURL explicitStoreURL: URL? = nil) throws {
-        let schema = Schema(versionedSchema: PocketFinancerSchemaV6.self)
+        let schema = Schema(versionedSchema: PocketFinancerSchemaV7.self)
 
         if inMemory {
             let configuration = ModelConfiguration(
