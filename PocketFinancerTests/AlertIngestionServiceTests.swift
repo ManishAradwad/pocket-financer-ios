@@ -208,7 +208,8 @@ final class AlertIngestionServiceTests: XCTestCase {
         let context = database.container.mainContext
         let service = AlertIngestionService(
             context: context,
-            smsExtractor: GroundedIngestionExtractor()
+            smsExtractor: GroundedIngestionExtractor(),
+            extractorEligibilityOverride: true
         )
 
         let receipt = try await service.ingest(
@@ -298,7 +299,8 @@ final class AlertIngestionServiceTests: XCTestCase {
         let probe = IngestionSelectorProbe()
         let service = AlertIngestionService(
             context: context,
-            smsExtractor: GroundedIngestionExtractor(probe: probe)
+            smsExtractor: GroundedIngestionExtractor(probe: probe),
+            extractorEligibilityOverride: true
         )
 
         let receipt = try await service.ingest(
@@ -360,7 +362,8 @@ final class AlertIngestionServiceTests: XCTestCase {
         let context = database.container.mainContext
         let service = AlertIngestionService(
             context: context,
-            smsExtractor: GroundedIngestionExtractor()
+            smsExtractor: GroundedIngestionExtractor(),
+            extractorEligibilityOverride: true
         )
 
         let receipt = try await service.ingest(
@@ -385,7 +388,8 @@ final class AlertIngestionServiceTests: XCTestCase {
         let probe = IngestionSelectorProbe()
         let service = AlertIngestionService(
             context: context,
-            smsExtractor: CancellingIngestionExtractor(probe: probe)
+            smsExtractor: CancellingIngestionExtractor(probe: probe),
+            extractorEligibilityOverride: true
         )
         _ = try service.enqueue(
             body: "INR 500.00 was debited from account **0000 at Demo Store.",
@@ -414,7 +418,8 @@ final class AlertIngestionServiceTests: XCTestCase {
         let context = database.container.mainContext
         let service = AlertIngestionService(
             context: context,
-            smsExtractor: GroundedIngestionExtractor()
+            smsExtractor: GroundedIngestionExtractor(),
+            extractorEligibilityOverride: true
         )
         let first = try await service.ingest(
             body: "INR 500.00 was debited from account **0000 at Demo Store.",
@@ -453,7 +458,8 @@ final class AlertIngestionServiceTests: XCTestCase {
         let context = database.container.mainContext
         let service = AlertIngestionService(
             context: context,
-            smsExtractor: GroundedIngestionExtractor()
+            smsExtractor: GroundedIngestionExtractor(),
+            extractorEligibilityOverride: true
         )
         let first = try await service.ingest(
             body: TestFixtures.validBody,

@@ -521,3 +521,16 @@ final class SmsTraceImportReceipt {
         self.provenanceRawValue = provenance
     }
 }
+
+/// Makes the V7 contract boundary a real, lightweight SwiftData schema change.
+/// Rows are created only when a native SMS release is explicitly activated.
+@Model
+final class SmsContractReleaseState {
+    @Attribute(.unique) var releaseID: String
+    var activatedAt: Date
+
+    init(releaseID: String, activatedAt: Date = .now) {
+        self.releaseID = releaseID
+        self.activatedAt = activatedAt
+    }
+}

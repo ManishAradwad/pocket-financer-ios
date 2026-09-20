@@ -54,6 +54,7 @@ final class AlertIngestionService {
     private let contextSaver: @MainActor (ModelContext) throws -> Void
     private let directSelector: any DirectCandidateSelecting
     private let smsExtractor: any FoundationSmsExtracting
+    private let extractorEligibilityOverride: Bool?
 
     /// Main-actor reentrancy permits another service instance to enter while a parser
     /// request is suspended. A process-wide token prevents a second attempt for the same
@@ -79,12 +80,14 @@ final class AlertIngestionService {
         context: ModelContext,
         contextSaver: @escaping @MainActor (ModelContext) throws -> Void = { try $0.save() },
         directSelector: any DirectCandidateSelecting = FoundationDirectCandidateSelector(),
-        smsExtractor: any FoundationSmsExtracting = FoundationSmsExtractor()
+        smsExtractor: any FoundationSmsExtracting = FoundationSmsExtractor(),
+        extractorEligibilityOverride: Bool? = nil
     ) {
         self.context = context
         self.contextSaver = contextSaver
         self.directSelector = directSelector
         self.smsExtractor = smsExtractor
+        self.extractorEligibilityOverride = extractorEligibilityOverride
     }
 
     static func enqueueLive(
@@ -445,7 +448,8 @@ final class AlertIngestionService {
                 parentOperationID: retryParentOperationID,
                 trigger: operationTrigger,
                 primaryCurrency: retrySettings.primaryCurrency,
-                enabledProfiles: retrySettings.enabledProfiles
+                enabledProfiles: retrySettings.enabledProfiles,
+                extractorEligibilityOverride: extractorEligibilityOverride
             )
             let coordinator = SmsV4ProcessingCoordinator(
                 store: processingStore,

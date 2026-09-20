@@ -161,7 +161,9 @@ enum PocketFinancerSchemaV6: VersionedSchema {
 /// snapshots retain their versioned payloads and are never reinterpreted.
 enum PocketFinancerSchemaV7: VersionedSchema {
     static let versionIdentifier = Schema.Version(7, 0, 0)
-    static var models: [any PersistentModel.Type] { PocketFinancerSchemaV6.models }
+    static var models: [any PersistentModel.Type] {
+        PocketFinancerSchemaV6.models + [SmsContractReleaseState.self]
+    }
 }
 
 enum PocketFinancerMigrationPlan: SchemaMigrationPlan {

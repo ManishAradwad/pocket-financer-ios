@@ -58,15 +58,22 @@ final class SmsReviewProjectionTests: XCTestCase {
     }
 
     func testProposalRejectsFloatingPointContractIntegers() throws {
+        let valid = try resultJSON()
         XCTAssertNil(
             SmsReviewProjection.parse(
-                resultJSON: try resultJSON(amount: 125_000.0),
+                resultJSON: valid.replacingOccurrences(
+                    of: "\"minor_units\":125000",
+                    with: "\"minor_units\":125000.0"
+                ),
                 source: source
             )
         )
         XCTAssertNil(
             SmsReviewProjection.parse(
-                resultJSON: try resultJSON(epochMilliseconds: 123_456_789.0),
+                resultJSON: valid.replacingOccurrences(
+                    of: "\"epoch_ms\":123456789",
+                    with: "\"epoch_ms\":123456789.0"
+                ),
                 source: source
             )
         )
