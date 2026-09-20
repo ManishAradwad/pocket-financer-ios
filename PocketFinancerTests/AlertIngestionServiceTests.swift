@@ -12,10 +12,16 @@ private actor IngestionSelectorProbe {
         started = true
     }
 
-    func waitUntilStarted() async {
+    func waitUntilStarted(timeout: Duration = .seconds(5)) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
         while !started {
-            await Task.yield()
+            if clock.now >= deadline {
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(10))
         }
+        return true
     }
 }
 
@@ -390,7 +396,8 @@ final class AlertIngestionServiceTests: XCTestCase {
         )
 
         let task = Task { await service.processPending() }
-        await probe.waitUntilStarted()
+        let didStart = await probe.waitUntilStarted()
+        XCTAssertTrue(didStart)
         task.cancel()
         _ = await task.value
 
