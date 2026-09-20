@@ -22,6 +22,7 @@ final class SmsReviewProjectionTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testDraftCorrectionRevalidatesExactSourceSpan() throws {
         let proposal = try XCTUnwrap(
             SmsReviewProjection.parse(resultJSON: try resultJSON(), source: source)
