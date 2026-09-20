@@ -55,7 +55,7 @@ struct ModelSelfTestResult: Equatable, Identifiable, Sendable {
 }
 
 enum ModelSelfTestService {
-    static let syntheticBody =
+    nonisolated static let syntheticBody =
         "HDFC Bank: INR 500.00 paid from account XXXXXX0000 on 05-08-2026 at Demo Store."
     static let syntheticSender = "AX-HDFCBK"
 
