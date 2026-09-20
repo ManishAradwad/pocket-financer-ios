@@ -50,6 +50,8 @@ final class NativeSmsProcessingTests: XCTestCase {
                 with: Data((try configuration.documentJSON(configHash: hash)).utf8)
             ) as? [String: Any])
         let extractor = try XCTUnwrap(document["extractor"] as? [String: Any])
+        XCTAssertTrue(document["parent_operation_id"] is NSNull)
+        XCTAssertTrue(extractor["ineligibility_reason"] is NSNull)
         XCTAssertEqual(extractor["model_identity_kind"] as? String, "system_managed_runtime")
         XCTAssertTrue(extractor["model_file_sha256"] is NSNull)
         XCTAssertEqual(document["config_hash"] as? String, hash)

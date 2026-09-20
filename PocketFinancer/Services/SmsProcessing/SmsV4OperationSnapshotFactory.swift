@@ -224,6 +224,37 @@ nonisolated struct SmsV4OperationConfiguration: Codable, Sendable {
             case rawOutputUTF8ByteLimit = "raw_output_utf8_byte_limit"
             case parserDeadlineMs = "parser_deadline_ms"
         }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(eligible, forKey: .eligible)
+            if let ineligibilityReason {
+                try container.encode(ineligibilityReason, forKey: .ineligibilityReason)
+            } else {
+                try container.encodeNil(forKey: .ineligibilityReason)
+            }
+            if let modelIdentifier {
+                try container.encode(modelIdentifier, forKey: .modelIdentifier)
+            } else {
+                try container.encodeNil(forKey: .modelIdentifier)
+            }
+            try container.encodeNil(forKey: .modelFileSHA256)
+            try container.encode(modelIdentityKind, forKey: .modelIdentityKind)
+            try container.encode(runtimeVersion, forKey: .runtimeVersion)
+            try container.encode(osVersion, forKey: .osVersion)
+            try container.encode(deviceCohort, forKey: .deviceCohort)
+            try container.encode(promptSHA256, forKey: .promptSHA256)
+            try container.encode(grammarSHA256, forKey: .grammarSHA256)
+            try container.encode(validationProfileSHA256, forKey: .validationProfileSHA256)
+            try container.encode(promptVersion, forKey: .promptVersion)
+            try container.encode(validationProfile, forKey: .validationProfile)
+            try container.encode(grammarVersion, forKey: .grammarVersion)
+            try container.encode(generationMode, forKey: .generationMode)
+            try container.encode(decoding, forKey: .decoding)
+            try container.encode(answerTokenLimit, forKey: .answerTokenLimit)
+            try container.encode(rawOutputUTF8ByteLimit, forKey: .rawOutputUTF8ByteLimit)
+            try container.encode(parserDeadlineMs, forKey: .parserDeadlineMs)
+        }
     }
     struct PersistencePolicy: Codable, Sendable {
         let version = "pocketfinancer.persistence-policy/1"
@@ -287,6 +318,28 @@ nonisolated struct SmsV4OperationConfiguration: Codable, Sendable {
         document["config_hash"] = configHash
         return try SmsV4ProcessingJSON.canonical(document)
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(contract, forKey: .contract)
+        try container.encode(operationID, forKey: .operationID)
+        if let parentOperationID {
+            try container.encode(parentOperationID, forKey: .parentOperationID)
+        } else {
+            try container.encodeNil(forKey: .parentOperationID)
+        }
+        try container.encode(sourceRefHash, forKey: .sourceRefHash)
+        try container.encode(trigger, forKey: .trigger)
+        try container.encode(createdAtEpochMs, forKey: .createdAtEpochMs)
+        try container.encode(admissionEpochMs, forKey: .admissionEpochMs)
+        try container.encode(contractRelease, forKey: .contractRelease)
+        try container.encode(analyzer, forKey: .analyzer)
+        try container.encode(currencyContext, forKey: .currencyContext)
+        try container.encode(receivedTimestamp, forKey: .receivedTimestamp)
+        try container.encode(extractor, forKey: .extractor)
+        try container.encode(persistencePolicy, forKey: .persistencePolicy)
+    }
+
     private static func epoch(_ date: Date) -> Int64 {
         Int64((date.timeIntervalSince1970 * 1_000).rounded(.towardZero))
     }
