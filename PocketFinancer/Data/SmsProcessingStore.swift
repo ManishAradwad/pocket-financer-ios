@@ -1481,7 +1481,7 @@ actor SmsProcessingStore {
         guard Set(command.corrections.map(\.field)).count == command.corrections.count else {
             return false
         }
-        switch command.kind {
+        return switch command.kind {
         case .correct:
             !command.corrections.isEmpty && command.retryConfiguration == nil
         case .saveDraft, .resolveMultipleEvents:
