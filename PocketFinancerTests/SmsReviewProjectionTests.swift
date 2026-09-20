@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import PocketFinancer
 
 final class SmsReviewProjectionTests: XCTestCase {

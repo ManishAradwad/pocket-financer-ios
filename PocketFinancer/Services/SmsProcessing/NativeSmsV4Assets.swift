@@ -9,24 +9,31 @@ nonisolated enum NativeSmsV4Assets {
 
     static func verify(in hostBundle: Bundle = .main) throws -> NativeSmsV3AssetBinding {
         guard let url = hostBundle.url(forResource: "NativeSmsV4", withExtension: "bundle"),
-              let bundle = Bundle(url: url), let root = bundle.resourceURL else {
+            let bundle = Bundle(url: url), let root = bundle.resourceURL
+        else {
             throw NativeSmsV3AssetIntegrityError.configurationIntegrityFailure
         }
-        let manifestURL = root.appendingPathComponent("configs/sms_processing/contracts/releases/native-integration-v4.json")
+        let manifestURL = root.appendingPathComponent(
+            "configs/sms_processing/contracts/releases/native-integration-v4.json")
         let data: Data
-        do { data = try Data(contentsOf: manifestURL) } catch { throw NativeSmsV3AssetIntegrityError.configurationIntegrityFailure }
+        do { data = try Data(contentsOf: manifestURL) } catch {
+            throw NativeSmsV3AssetIntegrityError.configurationIntegrityFailure
+        }
         guard hash(data) == manifestSHA256,
-              let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              manifest["release_id"] as? String == releaseID,
-              let artifacts = manifest["artifacts"] as? [[String: String]] else {
+            let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            manifest["release_id"] as? String == releaseID,
+            let artifacts = manifest["artifacts"] as? [[String: String]]
+        else {
             throw NativeSmsV3AssetIntegrityError.configurationIntegrityFailure
         }
         var result: [String: NativeSmsV3Artifact] = [:]
         for item in artifacts {
             guard let contract = item["contract"], let path = item["path"], let digest = item["sha256"],
-                  !path.contains(".."), path.hasPrefix("configs/sms_processing/") || path.hasPrefix("tests/sms_processing/"),
-                  result[contract] == nil,
-                  hash((try? Data(contentsOf: root.appendingPathComponent(path))) ?? Data()) == digest else {
+                !path.contains(".."),
+                path.hasPrefix("configs/sms_processing/") || path.hasPrefix("tests/sms_processing/"),
+                result[contract] == nil,
+                hash((try? Data(contentsOf: root.appendingPathComponent(path))) ?? Data()) == digest
+            else {
                 throw NativeSmsV3AssetIntegrityError.configurationIntegrityFailure
             }
             result[contract] = NativeSmsV3Artifact(contract: contract, path: path, sha256: digest)
@@ -34,7 +41,8 @@ nonisolated enum NativeSmsV4Assets {
         guard result["pocketfinancer.processing-config/4"]?.sha256 == processingConfigSHA256 else {
             throw NativeSmsV3AssetIntegrityError.configurationIntegrityFailure
         }
-        return NativeSmsV3AssetBinding(releaseID: releaseID, manifestSHA256: manifestSHA256, artifactsByContract: result)
+        return NativeSmsV3AssetBinding(
+            releaseID: releaseID, manifestSHA256: manifestSHA256, artifactsByContract: result)
     }
 
     private static func hash(_ data: Data) -> String {

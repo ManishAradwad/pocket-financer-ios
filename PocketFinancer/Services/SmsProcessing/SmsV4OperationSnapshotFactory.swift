@@ -26,28 +26,33 @@ struct SmsV4OperationSnapshotFactory {
         now: Date = .now
     ) throws -> SmsV4OperationSnapshot {
         let binding: NativeSmsV3AssetBinding
-        do { binding = try NativeSmsV4Assets.verify() }
-        catch { throw SmsProcessingStoreError.configurationMismatch }
+        do { binding = try NativeSmsV4Assets.verify() } catch { throw SmsProcessingStoreError.configurationMismatch }
         guard CurrencyFormatter.supportedScales[primaryCurrency] != nil,
-              !enabledProfiles.isEmpty,
-              Set(enabledProfiles).count == enabledProfiles.count,
-              enabledProfiles.allSatisfy({ ["core-en", "india"].contains($0) })
+            !enabledProfiles.isEmpty,
+            Set(enabledProfiles).count == enabledProfiles.count,
+            enabledProfiles.allSatisfy({ ["core-en", "india"].contains($0) })
         else { throw SmsProcessingStoreError.configurationMismatch }
         let sourceID = sourceAlertID
-        guard let alert = try context.fetch(
-            FetchDescriptor<InboxAlert>(predicate: #Predicate { $0.id == sourceID })
-        ).first else { throw SmsProcessingStoreError.sourceNotFound }
+        guard
+            let alert = try context.fetch(
+                FetchDescriptor<InboxAlert>(predicate: #Predicate { $0.id == sourceID })
+            ).first
+        else { throw SmsProcessingStoreError.sourceNotFound }
         let operationID = UUID()
         let stableEventID: UUID
         if let parentOperationID {
             let parentID = parentOperationID
-            guard let parent = try context.fetch(
-                FetchDescriptor<SmsProcessingOperation>(
-                    predicate: #Predicate { $0.id == parentID }
-                )
-            ).first else { throw SmsProcessingStoreError.operationNotFound }
+            guard
+                let parent = try context.fetch(
+                    FetchDescriptor<SmsProcessingOperation>(
+                        predicate: #Predicate { $0.id == parentID }
+                    )
+                ).first
+            else { throw SmsProcessingStoreError.operationNotFound }
             stableEventID = parent.stableEventID
-        } else { stableEventID = UUID() }
+        } else {
+            stableEventID = UUID()
+        }
         let model = SystemLanguageModel.default
         let eligible: Bool
         if let extractorEligibilityOverride {
@@ -87,8 +92,10 @@ struct SmsV4OperationSnapshotFactory {
             createdAt: now
         )
         context.insert(operation)
-        do { try context.save() }
-        catch { context.rollback(); throw SmsProcessingStoreError.saveFailed }
+        do { try context.save() } catch {
+            context.rollback()
+            throw SmsProcessingStoreError.saveFailed
+        }
         return SmsV4OperationSnapshot(
             operationID: operationID,
             parentOperationID: parentOperationID,
@@ -129,14 +136,20 @@ nonisolated struct SmsV4OperationConfiguration: Codable, Sendable {
     let persistencePolicy = PersistencePolicy()
 
     struct Release: Codable, Sendable {
-        let releaseID: String; let manifestSHA256: String
+        let releaseID: String
+        let manifestSHA256: String
         enum CodingKeys: String, CodingKey {
-            case releaseID = "release_id"; case manifestSHA256 = "manifest_sha256"
+            case releaseID = "release_id"
+            case manifestSHA256 = "manifest_sha256"
         }
     }
     struct Asset: Codable, Sendable {
-        let assetID: String; let sha256: String
-        enum CodingKeys: String, CodingKey { case assetID = "asset_id"; case sha256 }
+        let assetID: String
+        let sha256: String
+        enum CodingKeys: String, CodingKey {
+            case assetID = "asset_id"
+            case sha256
+        }
     }
     struct Analyzer: Codable, Sendable {
         let behaviorVersion = "pocketfinancer.structural-sms-analyzer/2"
@@ -151,18 +164,23 @@ nonisolated struct SmsV4OperationConfiguration: Codable, Sendable {
         }
     }
     struct CurrencyContext: Codable, Sendable {
-        let primaryCurrency: String; let enabledProfileIDs: [String]
+        let primaryCurrency: String
+        let enabledProfileIDs: [String]
         enum CodingKeys: String, CodingKey {
             case primaryCurrency = "primary_currency"
             case enabledProfileIDs = "enabled_profile_ids"
         }
     }
     struct ReceivedTimestamp: Codable, Sendable {
-        let epochMs: Int64; let provenance = "platform_received"
-        let timezoneID: String; let readOnly = true
+        let epochMs: Int64
+        let provenance = "platform_received"
+        let timezoneID: String
+        let readOnly = true
         enum CodingKeys: String, CodingKey {
-            case epochMs = "epoch_ms"; case provenance
-            case timezoneID = "timezone_id"; case readOnly = "read_only"
+            case epochMs = "epoch_ms"
+            case provenance
+            case timezoneID = "timezone_id"
+            case readOnly = "read_only"
         }
     }
     struct Extractor: Codable, Sendable {
@@ -186,15 +204,23 @@ nonisolated struct SmsV4OperationConfiguration: Codable, Sendable {
         let rawOutputUTF8ByteLimit = 16_384
         let parserDeadlineMs = 0
         enum CodingKeys: String, CodingKey {
-            case eligible; case ineligibilityReason = "ineligibility_reason"
-            case modelIdentifier = "model_identifier"; case modelFileSHA256 = "model_file_sha256"
-            case modelIdentityKind = "model_identity_kind"; case runtimeVersion = "runtime_version"
-            case osVersion = "os_version"; case deviceCohort = "device_cohort"
-            case promptSHA256 = "prompt_sha256"; case grammarSHA256 = "grammar_sha256"
+            case eligible
+            case ineligibilityReason = "ineligibility_reason"
+            case modelIdentifier = "model_identifier"
+            case modelFileSHA256 = "model_file_sha256"
+            case modelIdentityKind = "model_identity_kind"
+            case runtimeVersion = "runtime_version"
+            case osVersion = "os_version"
+            case deviceCohort = "device_cohort"
+            case promptSHA256 = "prompt_sha256"
+            case grammarSHA256 = "grammar_sha256"
             case validationProfileSHA256 = "validation_profile_sha256"
-            case promptVersion = "prompt_version"; case validationProfile = "validation_profile"
-            case grammarVersion = "grammar_version"; case generationMode = "generation_mode"
-            case decoding; case answerTokenLimit = "answer_token_limit"
+            case promptVersion = "prompt_version"
+            case validationProfile = "validation_profile"
+            case grammarVersion = "grammar_version"
+            case generationMode = "generation_mode"
+            case decoding
+            case answerTokenLimit = "answer_token_limit"
             case rawOutputUTF8ByteLimit = "raw_output_utf8_byte_limit"
             case parserDeadlineMs = "parser_deadline_ms"
         }
@@ -202,7 +228,10 @@ nonisolated struct SmsV4OperationConfiguration: Codable, Sendable {
     struct PersistencePolicy: Codable, Sendable {
         let version = "pocketfinancer.persistence-policy/1"
         let rolloutMode = "review_only"
-        enum CodingKeys: String, CodingKey { case version; case rolloutMode = "rollout_mode" }
+        enum CodingKeys: String, CodingKey {
+            case version
+            case rolloutMode = "rollout_mode"
+        }
     }
 
     init(
@@ -250,9 +279,11 @@ nonisolated struct SmsV4OperationConfiguration: Codable, Sendable {
 
     func payloadJSON() throws -> String { try CanonicalJSON.string(self) }
     func documentJSON(configHash: String) throws -> String {
-        guard var document = try JSONSerialization.jsonObject(
-            with: Data(payloadJSON().utf8)
-        ) as? [String: Any] else { throw SmsProcessingStoreError.configurationMismatch }
+        guard
+            var document = try JSONSerialization.jsonObject(
+                with: Data(payloadJSON().utf8)
+            ) as? [String: Any]
+        else { throw SmsProcessingStoreError.configurationMismatch }
         document["config_hash"] = configHash
         return try SmsV4ProcessingJSON.canonical(document)
     }
@@ -260,12 +291,18 @@ nonisolated struct SmsV4OperationConfiguration: Codable, Sendable {
         Int64((date.timeIntervalSince1970 * 1_000).rounded(.towardZero))
     }
     enum CodingKeys: String, CodingKey {
-        case contract; case operationID = "operation_id"
-        case parentOperationID = "parent_operation_id"; case sourceRefHash = "source_ref_hash"
-        case trigger; case createdAtEpochMs = "created_at_epoch_ms"
-        case admissionEpochMs = "admission_epoch_ms"; case contractRelease = "contract_release"
-        case analyzer; case currencyContext = "currency_context"
-        case receivedTimestamp = "received_timestamp"; case extractor
+        case contract
+        case operationID = "operation_id"
+        case parentOperationID = "parent_operation_id"
+        case sourceRefHash = "source_ref_hash"
+        case trigger
+        case createdAtEpochMs = "created_at_epoch_ms"
+        case admissionEpochMs = "admission_epoch_ms"
+        case contractRelease = "contract_release"
+        case analyzer
+        case currencyContext = "currency_context"
+        case receivedTimestamp = "received_timestamp"
+        case extractor
         case persistencePolicy = "persistence_policy"
     }
 }

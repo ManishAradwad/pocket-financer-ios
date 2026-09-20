@@ -278,13 +278,15 @@ final class PocketFinancerSchemaMigrationTests: XCTestCase {
         XCTAssertEqual(recovered.count, 1)
         let context = migratedDatabase.container.mainContext
         let targetOperationID = operationID
-        let operations = try context.fetch(FetchDescriptor<SmsProcessingOperation>(
-            predicate: #Predicate { $0.id == targetOperationID }
-        ))
+        let operations = try context.fetch(
+            FetchDescriptor<SmsProcessingOperation>(
+                predicate: #Predicate { $0.id == targetOperationID }
+            ))
         XCTAssertEqual(operations.first?.state, .retainedReview)
-        let attempts = try context.fetch(FetchDescriptor<SmsSelectorAttempt>(
-            predicate: #Predicate { $0.operationID == targetOperationID }
-        ))
+        let attempts = try context.fetch(
+            FetchDescriptor<SmsSelectorAttempt>(
+                predicate: #Predicate { $0.operationID == targetOperationID }
+            ))
         XCTAssertEqual(attempts.first?.completionRawValue, "interrupted")
         let reviews = try context.fetch(FetchDescriptor<SmsReviewCase>())
         XCTAssertEqual(reviews.first?.currentOperationID, operationID)

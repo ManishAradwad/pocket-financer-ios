@@ -9,7 +9,7 @@ actor SmsV4ProcessingCoordinator {
 
     init(
         store: SmsProcessingStore,
-        extractor: any FoundationSmsExtracting = FoundationSmsExtractor(),
+        extractor: any FoundationSmsExtracting,
         accountResolver: @escaping @MainActor @Sendable (String?) throws -> SmsAccountResolution
     ) {
         self.store = store
@@ -23,19 +23,19 @@ actor SmsV4ProcessingCoordinator {
         observer: any SmsProcessingObserver = NoOpSmsProcessingObserver()
     ) async -> SmsProcessingOutcome {
         guard source.sourceID == operation.sourceID,
-              operation.operationID.uuidString.lowercased() == operation.configuration.operationID,
-              operation.parentOperationID?.uuidString.lowercased()
+            operation.operationID.uuidString.lowercased() == operation.configuration.operationID,
+            operation.parentOperationID?.uuidString.lowercased()
                 == operation.configuration.parentOperationID,
-              CanonicalJSON.sha256(source.sourceID.uuidString.lowercased())
+            CanonicalJSON.sha256(source.sourceID.uuidString.lowercased())
                 == operation.configuration.sourceRefHash,
-              operation.configuration.contract == "pocketfinancer.processing-config/4",
-              operation.configuration.contractRelease.releaseID == NativeSmsV4Assets.releaseID,
-              operation.configuration.contractRelease.manifestSHA256
+            operation.configuration.contract == "pocketfinancer.processing-config/4",
+            operation.configuration.contractRelease.releaseID == NativeSmsV4Assets.releaseID,
+            operation.configuration.contractRelease.manifestSHA256
                 == NativeSmsV4Assets.manifestSHA256,
-              operation.configuration.extractor.modelIdentityKind == "system_managed_runtime",
-              operation.configuration.extractor.modelFileSHA256 == nil,
-              operation.configuration.persistencePolicy.rolloutMode == "review_only",
-              SmsV4ProcessingJSON.configurationMatches(operation)
+            operation.configuration.extractor.modelIdentityKind == "system_managed_runtime",
+            operation.configuration.extractor.modelFileSHA256 == nil,
+            operation.configuration.persistencePolicy.rolloutMode == "review_only",
+            SmsV4ProcessingJSON.configurationMatches(operation)
         else {
             return await retainWithoutClaim(
                 operation.operationID,
@@ -61,7 +61,7 @@ actor SmsV4ProcessingCoordinator {
             try await trace(&claim, "claim", "completed", [], observer)
             let evidence = try await store.sourceEvidence(sourceID: source.sourceID)
             guard evidence.admissionReceiptID == source.admissionReceiptID,
-                  CanonicalJSON.sha256(evidence.body) == source.sourceDigest
+                CanonicalJSON.sha256(evidence.body) == source.sourceDigest
             else {
                 return try await retain(
                     &claim, operation: operation,
@@ -78,8 +78,10 @@ actor SmsV4ProcessingCoordinator {
             guard operation.configuration.extractor.eligible else {
                 return try await retain(
                     &claim, operation: operation,
-                    reasons: [operation.configuration.extractor.ineligibilityReason
-                        ?? "runtime_unavailable"], observer: observer
+                    reasons: [
+                        operation.configuration.extractor.ineligibilityReason
+                            ?? "runtime_unavailable"
+                    ], observer: observer
                 )
             }
             let request = try SmsV4ProcessingJSON.request(
@@ -187,7 +189,8 @@ actor SmsV4ProcessingCoordinator {
         }
     }
 
-    private static let runtimeProfileJSON = #"{"generation_mode":"DIRECT_NON_THINKING","decoding":"greedy","answer_token_limit":512,"raw_output_utf8_byte_limit":16384,"parser_deadline_ms":0}"#
+    private static let runtimeProfileJSON =
+        #"{"generation_mode":"DIRECT_NON_THINKING","decoding":"greedy","answer_token_limit":512,"raw_output_utf8_byte_limit":16384,"parser_deadline_ms":0}"#
 
     private func settleNone(
         _ claim: inout SmsOperationClaim,
@@ -252,9 +255,9 @@ actor SmsV4ProcessingCoordinator {
         let accountID: UUID?
         if case .unique(let value) = resolution { accountID = value } else { accountID = nil }
         let fingerprint = CanonicalJSON.sha256(
-            "\(transaction.minorUnits)\0\(transaction.currency)\0" +
-                "\(transaction.direction.rawValue)\0\(accountID?.uuidString.lowercased() ?? "")\0" +
-                "\(operation.configuration.receivedTimestamp.epochMs)"
+            "\(transaction.minorUnits)\0\(transaction.currency)\0"
+                + "\(transaction.direction.rawValue)\0\(accountID?.uuidString.lowercased() ?? "")\0"
+                + "\(operation.configuration.receivedTimestamp.epochMs)"
         )
         let duplicateStatus = try await store.v4DuplicateStatus(
             operationID: operation.operationID,
@@ -282,7 +285,7 @@ actor SmsV4ProcessingCoordinator {
             duplicateStatus: duplicateStatus
         )
         guard let gateResult = gate["result"] as? String,
-              let gateReason = gate["primary_reason"] as? String
+            let gateReason = gate["primary_reason"] as? String
         else { throw SmsProcessingStoreError.configurationMismatch }
         try await recordResult(
             &claim, extraction: extraction,
@@ -339,10 +342,11 @@ actor SmsV4ProcessingCoordinator {
         let receipt = try await store.appendTrace(
             claim, stage: stage, status: status, reasonCodes: safeReasons
         )
-        await observer.didReceive(SmsProcessingObserverEvent(
-            operationID: claim.operationID, sequence: receipt.sequence,
-            stage: stage, status: status, reasonCodes: safeReasons
-        ))
+        await observer.didReceive(
+            SmsProcessingObserverEvent(
+                operationID: claim.operationID, sequence: receipt.sequence,
+                stage: stage, status: status, reasonCodes: safeReasons
+            ))
     }
 
     private func retain(
@@ -351,7 +355,8 @@ actor SmsV4ProcessingCoordinator {
         reasons: [String],
         observer: any SmsProcessingObserver
     ) async throws -> SmsProcessingOutcome {
-        let safeReasons = reasons.isEmpty
+        let safeReasons =
+            reasons.isEmpty
             ? ["persistence_triage_requires_review"] : Array(Set(reasons)).sorted()
         try await trace(&claim, "settlement", "retained", safeReasons, observer)
         let reviewID = try await store.retainForReview(claim, reasons: safeReasons)

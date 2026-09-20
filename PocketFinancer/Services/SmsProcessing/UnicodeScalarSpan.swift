@@ -37,9 +37,12 @@ nonisolated struct UnicodeScalarSpan: Codable, Equatable, Sendable {
     }
 
     func stringRange(in source: String) throws -> Range<String.Index> {
-        guard let lower = source.unicodeScalars.index(source.unicodeScalars.startIndex, offsetBy: startScalar, limitedBy: source.unicodeScalars.endIndex),
-              let upper = source.unicodeScalars.index(source.unicodeScalars.startIndex, offsetBy: endScalar, limitedBy: source.unicodeScalars.endIndex),
-              let start = String.Index(lower, within: source), let end = String.Index(upper, within: source)
+        guard
+            let lower = source.unicodeScalars.index(
+                source.unicodeScalars.startIndex, offsetBy: startScalar, limitedBy: source.unicodeScalars.endIndex),
+            let upper = source.unicodeScalars.index(
+                source.unicodeScalars.startIndex, offsetBy: endScalar, limitedBy: source.unicodeScalars.endIndex),
+            let start = String.Index(lower, within: source), let end = String.Index(upper, within: source)
         else { throw SmsExtractorValidationError.evidenceOutOfBounds }
         return start..<end
     }

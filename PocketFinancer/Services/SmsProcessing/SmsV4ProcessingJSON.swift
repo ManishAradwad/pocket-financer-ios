@@ -65,24 +65,27 @@ nonisolated enum SmsV4ProcessingJSON {
     ) throws -> String {
         let semantic: Any
         if let transaction = extraction.transaction {
-            semantic = [
-                "money": [
-                    "minor_units": transaction.minorUnits,
-                    "currency": transaction.currency,
-                ],
-                "direction": transaction.direction.rawValue,
-                "account_reference": transaction.accountReference,
-                "counterparty": (transaction.counterparty as Any?) ?? NSNull(),
-                "evidence": [
-                    "amount": scalarSpan(transaction.amountSpan),
-                    "direction": scalarSpan(transaction.directionSpan),
-                    "account": scalarSpan(transaction.accountSpan),
-                    "counterparty": transaction.counterpartySpan.map {
-                        scalarSpan($0) as Any
-                    } ?? NSNull(),
-                ],
-            ] as [String: Any]
-        } else { semantic = NSNull() }
+            semantic =
+                [
+                    "money": [
+                        "minor_units": transaction.minorUnits,
+                        "currency": transaction.currency,
+                    ],
+                    "direction": transaction.direction.rawValue,
+                    "account_reference": transaction.accountReference,
+                    "counterparty": (transaction.counterparty as Any?) ?? NSNull(),
+                    "evidence": [
+                        "amount": scalarSpan(transaction.amountSpan),
+                        "direction": scalarSpan(transaction.directionSpan),
+                        "account": scalarSpan(transaction.accountSpan),
+                        "counterparty": transaction.counterpartySpan.map {
+                            scalarSpan($0) as Any
+                        } ?? NSNull(),
+                    ],
+                ] as [String: Any]
+        } else {
+            semantic = NSNull()
+        }
         return try canonical([
             "contract": "pocketfinancer.processing-result/3",
             "status": status,
@@ -104,7 +107,8 @@ nonisolated enum SmsV4ProcessingJSON {
         _ resolution: SmsAccountResolution,
         reference: String
     ) -> [String: Any] {
-        let aliasKey = reference.isEmpty
+        let aliasKey =
+            reference.isEmpty
             ? nil
             : (reference.contains("@") ? "vpa:\(reference)" : "suffix:\(reference)")
         let base: [String: Any]
@@ -182,19 +186,21 @@ nonisolated enum SmsV4ProcessingJSON {
         accountReason: String?,
         duplicateStatus: String
     ) throws -> String {
-        try canonical(checks(
-            posted: posted, accountReason: accountReason,
-            duplicateStatus: duplicateStatus
-        ))
+        try canonical(
+            checks(
+                posted: posted, accountReason: accountReason,
+                duplicateStatus: duplicateStatus
+            ))
     }
 
     static func canonical(_ value: Any) throws -> String {
         guard JSONSerialization.isValidJSONObject(value) else {
             throw SmsProcessingStoreError.configurationMismatch
         }
-        return String(decoding: try JSONSerialization.data(
-            withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]
-        ), as: UTF8.self)
+        return String(
+            decoding: try JSONSerialization.data(
+                withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]
+            ), as: UTF8.self)
     }
 
     static func configurationMatches(_ operation: SmsV4OperationSnapshot) -> Bool {
@@ -208,19 +214,20 @@ nonisolated enum SmsV4ProcessingJSON {
         configurationJSON: String,
         configurationHash: String
     ) -> Bool {
-        guard var value = try? JSONSerialization.jsonObject(
-            with: Data(configurationJSON.utf8)
-        ) as? [String: Any],
-              value.removeValue(forKey: "config_hash") as? String == configurationHash,
-              let payload = try? canonical(value),
-              CanonicalJSON.sha256(payload) == configurationHash,
-              let document = try? canonical(
+        guard
+            var value = try? JSONSerialization.jsonObject(
+                with: Data(configurationJSON.utf8)
+            ) as? [String: Any],
+            value.removeValue(forKey: "config_hash") as? String == configurationHash,
+            let payload = try? canonical(value),
+            CanonicalJSON.sha256(payload) == configurationHash,
+            let document = try? canonical(
                 value.merging(["config_hash": configurationHash]) { _, new in new }
-              ),
-              document == configurationJSON,
-              let extractor = value["extractor"] as? [String: Any],
-              extractor["model_identity_kind"] as? String == "system_managed_runtime",
-              extractor["model_file_sha256"] is NSNull
+            ),
+            document == configurationJSON,
+            let extractor = value["extractor"] as? [String: Any],
+            extractor["model_identity_kind"] as? String == "system_managed_runtime",
+            extractor["model_file_sha256"] is NSNull
         else { return false }
         return true
     }

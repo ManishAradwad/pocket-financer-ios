@@ -62,7 +62,8 @@ struct EvidenceSelectionTextView: UIViewRepresentable {
         } else {
             view.selectedRange = NSRange(location: 0, length: 0)
         }
-        view.accessibilityLabel = "SMS evidence. \(activeField.label) is active. Drag the selection handles to reselect it."
+        view.accessibilityLabel =
+            "SMS evidence. \(activeField.label) is active. Drag the selection handles to reselect it."
         context.coordinator.updating = false
     }
 
@@ -83,19 +84,21 @@ struct EvidenceSelectionTextView: UIViewRepresentable {
             let start = scalars.distance(from: scalars.startIndex, to: scalarStart)
             let end = scalars.distance(from: scalars.startIndex, to: scalarEnd)
             let text = String(parent.source[range])
-            guard let span = try? UnicodeScalarSpan(
-                source: parent.source,
-                startScalar: start,
-                endScalar: end,
-                text: text
-            ) else { return }
+            guard
+                let span = try? UnicodeScalarSpan(
+                    source: parent.source,
+                    startScalar: start,
+                    endScalar: end,
+                    text: text
+                )
+            else { return }
             parent.onSelectionChanged(span)
         }
     }
 }
 
-private extension SmsReviewField {
-    var color: UIColor {
+extension SmsReviewField {
+    fileprivate var color: UIColor {
         switch self {
         case .amount: UIColor.systemOrange
         case .direction: UIColor.systemBlue

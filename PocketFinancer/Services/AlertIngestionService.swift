@@ -387,10 +387,10 @@ final class AlertIngestionService {
             mode: retryConfigurationMode
         )
         if let originalContract,
-           ![
-               "pocketfinancer.processing-config/2",
-               "pocketfinancer.processing-config/4",
-           ].contains(originalContract)
+            ![
+                "pocketfinancer.processing-config/2",
+                "pocketfinancer.processing-config/4",
+            ].contains(originalContract)
         {
             currentAlert.status = .needsReview
             currentAlert.lastErrorCode = "original_configuration_adapter_unavailable"
@@ -411,7 +411,8 @@ final class AlertIngestionService {
             admissionReceiptID: currentAlert.id,
             sourceDigest: CanonicalJSON.sha256(currentAlert.rawBody)
         )
-        let operationTrigger = retryParentOperationID == nil
+        let operationTrigger =
+            retryParentOperationID == nil
             ? (allowBeyondAutomaticAttemptLimit ? "foreground_or_user" : "automatic_recovery")
             : "retry"
         let useLegacyOriginal = originalContract == "pocketfinancer.processing-config/2"
@@ -531,15 +532,16 @@ final class AlertIngestionService {
     ) throws -> String? {
         guard mode == "original", let parentOperationID else { return nil }
         let parentID = parentOperationID
-        guard let operation = try context.fetch(
-            FetchDescriptor<SmsProcessingOperation>(
-                predicate: #Predicate { $0.id == parentID }
-            )
-        ).first,
-              let document = try? JSONSerialization.jsonObject(
+        guard
+            let operation = try context.fetch(
+                FetchDescriptor<SmsProcessingOperation>(
+                    predicate: #Predicate { $0.id == parentID }
+                )
+            ).first,
+            let document = try? JSONSerialization.jsonObject(
                 with: Data(operation.configurationJSON.utf8)
-              ) as? [String: Any],
-              let contract = document["contract"] as? String
+            ) as? [String: Any],
+            let contract = document["contract"] as? String
         else { throw AlertIngestionError.persistenceFailed }
         return contract
     }

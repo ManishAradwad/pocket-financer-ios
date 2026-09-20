@@ -49,8 +49,10 @@ struct GroundedReviewCorrectionView: View {
             Section {
                 Label("Check the proposed transaction", systemImage: "checkmark.shield")
                     .font(.headline)
-                Text("The SMS stays unchanged. Select a field, then drag the native text handles over its exact wording.")
-                    .foregroundStyle(.secondary)
+                Text(
+                    "The SMS stays unchanged. Select a field, then drag the native text handles over its exact wording."
+                )
+                .foregroundStyle(.secondary)
                 LabeledContent("Sender", value: sender)
                 LabeledContent(
                     "Receipt time",
@@ -147,9 +149,12 @@ struct GroundedReviewCorrectionView: View {
     }
 
     private var accountPreview: String {
-        if working.accountStatus == "ambiguous" { return "More than one owned account matches. Confirmation is blocked." }
+        if working.accountStatus == "ambiguous" {
+            return "More than one owned account matches. Confirmation is blocked."
+        }
         if working.accountStatus == "unresolved" {
-            return "Owned-account aliases will be rechecked when you confirm; one match is reused, otherwise a new local account is created."
+            return
+                "Owned-account aliases will be rechecked when you confirm; one match is reused, otherwise a new local account is created."
         }
         if working.resolvedAccountID != nil, let resolvedAccountName {
             return "Will reuse \(resolvedAccountName)."

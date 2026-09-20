@@ -6,10 +6,11 @@ final class SmsExtractorValidatorTests: XCTestCase {
     func testSanitizedExtractorVectorsMatchFrozenExpectedSemantics() throws {
         let bundleURL = try XCTUnwrap(Bundle.main.url(forResource: "NativeSmsV4", withExtension: "bundle"))
         let bundle = try XCTUnwrap(Bundle(url: bundleURL))
-        let url = try XCTUnwrap(bundle.url(
-            forResource: "sanitized-vectors", withExtension: "json",
-            subdirectory: "tests/sms_processing/golden/extractor-v1"
-        ))
+        let url = try XCTUnwrap(
+            bundle.url(
+                forResource: "sanitized-vectors", withExtension: "json",
+                subdirectory: "tests/sms_processing/golden/extractor-v1"
+            ))
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let vectors = try XCTUnwrap(root["cases"] as? [[String: Any]])
         let validator = SmsExtractorValidator()
@@ -20,7 +21,8 @@ final class SmsExtractorValidatorTests: XCTestCase {
             let output = try JSONSerialization.data(withJSONObject: try XCTUnwrap(vector["model_output"]))
             let raw = String(decoding: output, as: UTF8.self)
             if let reason = vector["expected_reason"] as? String {
-                XCTAssertThrowsError(try validator.validate(rawOutput: raw, source: source, primaryCurrency: "INR"), id) {
+                XCTAssertThrowsError(try validator.validate(rawOutput: raw, source: source, primaryCurrency: "INR"), id)
+                {
                     XCTAssertEqual(($0 as? SmsExtractorValidationError)?.reasonCode, reason)
                 }
                 continue
@@ -46,16 +48,24 @@ final class SmsExtractorValidatorTests: XCTestCase {
     func testStrictOutputRejectsDuplicateKeyTrailingDocumentExponentAndDecimalNumbers() throws {
         let validator = SmsExtractorValidator()
         let source = "INR 10.00 debited from XX1234"
-        XCTAssertThrowsError(try validator.validate(rawOutput: #"{"decision":"none","decision":"abstain"}"#, source: source, primaryCurrency: "INR")) {
+        XCTAssertThrowsError(
+            try validator.validate(
+                rawOutput: #"{"decision":"none","decision":"abstain"}"#, source: source, primaryCurrency: "INR")
+        ) {
             XCTAssertEqual(($0 as? SmsExtractorValidationError)?.reasonCode, "extractor_duplicate_json_key")
         }
-        XCTAssertThrowsError(try validator.validate(rawOutput: #"{"decision":"none"} {}"#, source: source, primaryCurrency: "INR")) {
+        XCTAssertThrowsError(
+            try validator.validate(rawOutput: #"{"decision":"none"} {}"#, source: source, primaryCurrency: "INR")
+        ) {
             XCTAssertEqual(($0 as? SmsExtractorValidationError)?.reasonCode, "extractor_extra_content")
         }
-        XCTAssertThrowsError(try validator.validate(rawOutput: #"{"decision":1e0}"#, source: source, primaryCurrency: "INR")) {
+        XCTAssertThrowsError(
+            try validator.validate(rawOutput: #"{"decision":1e0}"#, source: source, primaryCurrency: "INR")
+        ) {
             XCTAssertEqual(($0 as? SmsExtractorValidationError)?.reasonCode, "extractor_malformed_json")
         }
-        let decimalScalar = #"{"decision":"posted","amount":{"value":"10.00","currency":"INR","evidence":{"start_scalar":0.0,"end_scalar":9,"text":"INR 10.00"}},"direction":{"value":"debit","evidence":{"start_scalar":10,"end_scalar":17,"text":"debited"}},"account":{"reference":"XX1234","evidence":{"start_scalar":23,"end_scalar":29,"text":"XX1234"}},"counterparty":null}"#
+        let decimalScalar =
+            #"{"decision":"posted","amount":{"value":"10.00","currency":"INR","evidence":{"start_scalar":0.0,"end_scalar":9,"text":"INR 10.00"}},"direction":{"value":"debit","evidence":{"start_scalar":10,"end_scalar":17,"text":"debited"}},"account":{"reference":"XX1234","evidence":{"start_scalar":23,"end_scalar":29,"text":"XX1234"}},"counterparty":null}"#
         XCTAssertThrowsError(try validator.validate(rawOutput: decimalScalar, source: source, primaryCurrency: "INR")) {
             XCTAssertEqual(($0 as? SmsExtractorValidationError)?.reasonCode, "extractor_malformed_json")
         }

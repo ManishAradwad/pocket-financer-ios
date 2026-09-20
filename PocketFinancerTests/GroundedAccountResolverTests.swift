@@ -13,13 +13,14 @@ final class GroundedAccountResolverTests: XCTestCase {
         )
         let aliasHash = CanonicalJSON.sha256("suffix:1234")
         context.insert(account)
-        context.insert(SmsAccountAlias(
-            accountID: account.id,
-            normalizedAliasHash: aliasHash,
-            aliasKind: "suffix",
-            matchingScope: "owned_account_v1",
-            confirmedByUser: true
-        ))
+        context.insert(
+            SmsAccountAlias(
+                accountID: account.id,
+                normalizedAliasHash: aliasHash,
+                aliasKind: "suffix",
+                matchingScope: "owned_account_v1",
+                confirmedByUser: true
+            ))
         try context.save()
 
         let resolution = try GroundedAccountResolver(context: context).resolve(
@@ -51,13 +52,14 @@ final class GroundedAccountResolverTests: XCTestCase {
         ]
         for account in accounts {
             context.insert(account)
-            context.insert(SmsAccountAlias(
-                accountID: account.id,
-                normalizedAliasHash: aliasHash,
-                aliasKind: "suffix",
-                matchingScope: "owned_account_v1",
-                confirmedByUser: true
-            ))
+            context.insert(
+                SmsAccountAlias(
+                    accountID: account.id,
+                    normalizedAliasHash: aliasHash,
+                    aliasKind: "suffix",
+                    matchingScope: "owned_account_v1",
+                    confirmedByUser: true
+                ))
         }
         try context.save()
 

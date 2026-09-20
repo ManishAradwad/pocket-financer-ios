@@ -73,8 +73,10 @@ struct ReviewCorrectionView: View {
             Section {
                 Label("The on-device result could not be verified", systemImage: "exclamationmark.shield")
                     .font(.headline)
-                Text("Nothing can be saved from this result. Retry local extraction or mark the alert as not a transaction.")
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Nothing can be saved from this result. Retry local extraction or mark the alert as not a transaction."
+                )
+                .foregroundStyle(.secondary)
             }
             Section {
                 Button("Retry extraction") { resolve(.retry, retry: "current") }
@@ -456,8 +458,8 @@ struct ReviewCorrectionView: View {
         if let stored, stored.contractVersion == "pocketfinancer.processing-result/3" {
             guard let alert,
                 let proposal = SmsReviewProjection.parse(
-                resultJSON: stored.semanticResultJSON,
-                source: alert.rawBody
+                    resultJSON: stored.semanticResultJSON,
+                    source: alert.rawBody
                 )
             else {
                 invalidV4Proposal = true

@@ -45,9 +45,10 @@ final class NativeSmsProcessingTests: XCTestCase {
         )
         let payload = try configuration.payloadJSON()
         let hash = CanonicalJSON.sha256(payload)
-        let document = try XCTUnwrap(JSONSerialization.jsonObject(
-            with: Data((try configuration.documentJSON(configHash: hash)).utf8)
-        ) as? [String: Any])
+        let document = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data((try configuration.documentJSON(configHash: hash)).utf8)
+            ) as? [String: Any])
         let extractor = try XCTUnwrap(document["extractor"] as? [String: Any])
         XCTAssertEqual(extractor["model_identity_kind"] as? String, "system_managed_runtime")
         XCTAssertTrue(extractor["model_file_sha256"] is NSNull)

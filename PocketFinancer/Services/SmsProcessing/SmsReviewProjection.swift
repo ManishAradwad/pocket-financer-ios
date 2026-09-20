@@ -60,9 +60,10 @@ nonisolated enum SmsReviewProjection {
             SmsExtractorNormalizer.direction(directionSpan.text) == direction,
             SmsExtractorNormalizer.normalizeAccount(accountSpan.text)
                 == SmsExtractorNormalizer.normalizeAccount(accountReference),
-            counterparty == nil || SmsExtractorNormalizer.normalizeCounterparty(
-                counterpartySpan?.text ?? ""
-            ) == SmsExtractorNormalizer.normalizeCounterparty(counterparty ?? "")
+            counterparty == nil
+                || SmsExtractorNormalizer.normalizeCounterparty(
+                    counterpartySpan?.text ?? ""
+                ) == SmsExtractorNormalizer.normalizeCounterparty(counterparty ?? "")
         else { return nil }
         guard
             let account = root["account_resolution"] as? [String: Any],
@@ -89,7 +90,8 @@ nonisolated enum SmsReviewProjection {
         let resolvedAccountID = accountIDField.flatMap(UUID.init(uuidString:))
         guard let normalizedSemanticAccount = SmsExtractorNormalizer.normalizeAccount(accountReference)
         else { return nil }
-        let semanticAliasKey = normalizedSemanticAccount.contains("@")
+        let semanticAliasKey =
+            normalizedSemanticAccount.contains("@")
             ? "vpa:\(normalizedSemanticAccount)"
             : "suffix:\(normalizedSemanticAccount)"
         guard normalizedReferenceField == semanticAliasKey else { return nil }
@@ -118,10 +120,10 @@ nonisolated enum SmsReviewProjection {
             return nil
         }
         guard
-            transactionFingerprint == CanonicalJSON.sha256(
-                "\(amount)\0\(currency)\0\(direction)\0" +
-                    "\(accountIDField ?? "")\0\(epochMilliseconds)"
-            )
+            transactionFingerprint
+                == CanonicalJSON.sha256(
+                    "\(amount)\0\(currency)\0\(direction)\0" + "\(accountIDField ?? "")\0\(epochMilliseconds)"
+                )
         else { return nil }
         return SmsReviewProposal(
             amountMinorUnits: amount,
@@ -159,10 +161,11 @@ nonisolated enum SmsReviewProjection {
                     endScalar: evidence.endScalar,
                     text: evidence.text
                 )
-                guard let amount = try? SmsExtractorNormalizer.minorUnits(
-                    evidenceText: verified.text,
-                    currency: result.currency
-                ), let declaredAmount = Int64(correction.newValue), amount == declaredAmount
+                guard
+                    let amount = try? SmsExtractorNormalizer.minorUnits(
+                        evidenceText: verified.text,
+                        currency: result.currency
+                    ), let declaredAmount = Int64(correction.newValue), amount == declaredAmount
                 else { throw SmsProcessingStoreError.invalidCommand }
                 result.amountMinorUnits = amount
                 result.amountSpan = verified
